@@ -25,10 +25,7 @@ jobs:
         id: prep
         run: |
           DOCKER_IMAGE=mrc527/iodine
-          if [[ $GITHUB_REF == refs/tags/* ]]; then
-            VERSION=${GITHUB_REF#refs/tags/v}
-          fi
-          TAGS="${DOCKER_IMAGE}:${VERSION},${DOCKER_IMAGE}:latest"
+          TAGS="${DOCKER_IMAGE}:latest"
           echo "${TAGS}"
           echo ::set-output name=tags::${TAGS}
       - name: Cache Docker layers
