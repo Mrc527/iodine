@@ -115,7 +115,7 @@ START_TEST(test_find_available_user)
 	int i;
 
 	ip = inet_addr("127.0.0.1");
-	init_users(ip, 27);
+	init_users(ip, 24);
 
 	for (i = 0; i < USERS; i++) {
 		users[i].authenticated = 1;
