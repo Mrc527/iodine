@@ -1,4 +1,4 @@
 #!/bin/sh
 ./generate-cert.sh
 service squid start
-iodined -c -f $INT_IP -P $PASSWORD -n $EXP_IP $DOMAIN
+iodined -c -f -P $PASSWORD -n $EXT_IP $INT_IP $DOMAIN

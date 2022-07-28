@@ -1,7 +1,9 @@
 FROM gcc AS builder
 
+RUN apt update && apt install -y check
 COPY . .
 RUN make
+RUN make tests
 
 FROM debian:11
 
