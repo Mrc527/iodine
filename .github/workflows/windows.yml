@@ -23,3 +23,9 @@ jobs:
         install: git make mingw-w64-x86_64-toolchain mingw-w64-x86_64-zlib
     - name: make
       run: make TARGETOS=windows32
+    - name: 'Upload Artifact'
+      uses: actions/upload-artifact@v3
+      with:
+        name: bin
+        path: bin
+        retention-days: 5
