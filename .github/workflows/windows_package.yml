@@ -3,8 +3,8 @@ name: windows_package
 on:
   push:
     branches: [ master ]
-  pull_request:
-    branches: [ master ]
+    tags:
+      - "v*.*.*"
 
 jobs:
   build:
@@ -29,8 +29,8 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: latest
-        release_name: iodine
+        tag_name: ${ GITHUB_REF#refs/tags/v }
+        release_name: ${ GITHUB_REF#refs/tags/v }
         draft: true
         prerelease: false
 
