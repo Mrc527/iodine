@@ -30,6 +30,7 @@ jobs:
         path: iodine-latest-windows.zip
         retention-days: 5
   release:
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
     - name: Create Draft Release
