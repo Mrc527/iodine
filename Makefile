@@ -58,7 +58,7 @@ iodine-latest:
 	@echo "Git version: " >> iodine-latest/VERSION.txt
 	@git rev-parse HEAD >> iodine-latest/VERSION.txt
 	@for i in README.md CHANGELOG; do cp $$i iodine-latest/$$i.txt; done
-	@unix2dos iodine-latest/*
+	@todos iodine-latest/*
 
 #non-PIE build for old android
 cross-android-old:
