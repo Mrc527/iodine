@@ -23,18 +23,14 @@ jobs:
         name: iodine-latest-windows.zip
         path: iodine-latest-windows.zip
         retention-days: 5
-  release:
-    needs: [build]
-    runs-on: ubuntu-latest
-    steps:
     - name: Create Draft Release
       id: create_release
       uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: <tofill>
-        release_name: <tofill>
+        tag_name: latest
+        release_name: iodine
         draft: true
         prerelease: false
 
