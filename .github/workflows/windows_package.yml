@@ -13,8 +13,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
-    - name: install fromdos
-      run: sudo apt install tofrodos
+    - name: install deps
+      run: sudo apt install tofrodos gcc-mingw-w64
     - name: make
       run: make iodine-latest-windows.zip
     - name: 'Upload Artifact'
