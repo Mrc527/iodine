@@ -15,11 +15,6 @@ jobs:
       run: sudo apt install tofrodos gcc-mingw-w64 libz-mingw-w64-dev
     - name: make
       run: make iodine-latest-windows.zip
-    - name: Get tag
-      id: tag
-      uses: dawidd6/action-get-tag@v1
-      with:
-        strip_v: true
     - name: 'Upload Artifact'
       uses: actions/upload-artifact@v3
       with:
@@ -69,7 +64,11 @@ jobs:
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v2
-
+      - name: Get tag
+        id: tag
+        uses: dawidd6/action-get-tag@v1
+        with:
+          strip_v: true
       - name: Create Draft Release
         id: create_release
         uses: actions/create-release@v1
