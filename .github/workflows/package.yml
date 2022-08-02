@@ -89,6 +89,22 @@ jobs:
           asset_path: ./iodine-latest-windows.zip
           asset_name: iodine-latest-windows.zip
           asset_content_type: application/zip
+      - uses: actions/upload-release-asset@v1.0.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./iodine-latest-linux-amd64
+          asset_name: iodine-latest-linux-amd64
+          asset_content_type: application/zip
+      - uses: actions/upload-release-asset@v1.0.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./iodine-latest-macos-amd64
+          asset_name: iodine-latest-macos-amd64
+          asset_content_type: application/zip
 
       - uses: eregon/publish-release@v1
         env:
