@@ -21,7 +21,7 @@ jobs:
       id: tag
       uses: dawidd6/action-get-tag@v1
       with:
-      strip_v: true
+        strip_v: true
     - name: 'Upload Artifact'
       uses: actions/upload-artifact@v3
       with:
