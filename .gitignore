@@ -6,3 +6,7 @@
 *.o.d
 /src/obj/local/*/iodine
 /src/libs/*/iodine
+.vscode/configurationCache.log
+.vscode/dryrun.log
+.vscode/settings.json
+.vscode/targets.log
