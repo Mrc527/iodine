@@ -14,7 +14,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: install deps
-      run: sudo apt install tofrodos gcc-mingw-w64
+      run: sudo apt install tofrodos gcc-mingw-w64 libz-dev
     - name: make
       run: make iodine-latest-windows.zip
     - name: 'Upload Artifact'
