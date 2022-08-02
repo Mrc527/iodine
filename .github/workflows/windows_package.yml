@@ -16,7 +16,11 @@ jobs:
     - name: install deps
       run: sudo apt install tofrodos gcc-mingw-w64 libz-mingw-w64-dev
     - name: make
-      run: make iodine-latest-windows.zip
+      run: |
+            make iodine-latest-windows.zip
+            TAGS="${GITHUB_REF#refs/tags/v}"
+            echo "${TAGS}"
+            echo ::set-output name=tags::${TAGS}
     - name: 'Upload Artifact'
       uses: actions/upload-artifact@v3
       with:
@@ -29,7 +33,7 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: ${ GITHUB_REF#refs/tags/v }
+        tag_name: ${GITHUB_REF#refs/tags/v}
         release_name: ${ GITHUB_REF#refs/tags/v }
         draft: true
         prerelease: false
