@@ -91,7 +91,7 @@ jobs:
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ./iodine-latest-windows.zip/iodine-latest-windows.zip
-          asset_name: iodine-latest-windows
+          asset_name: iodine-latest-windows.zip
           asset_content_type: application/zip
       - uses: actions/upload-release-asset@v1.0.1
         env:
@@ -99,7 +99,7 @@ jobs:
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ./iodine-latest-linux-amd64.zip
-          asset_name: iodine-latest-linux-amd64
+          asset_name: iodine-latest-linux-amd64.zip
           asset_content_type: application/zip
       - uses: actions/upload-release-asset@v1.0.1
         env:
@@ -107,7 +107,7 @@ jobs:
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ./iodine-latest-macos-amd64.zip
-          asset_name: iodine-latest-macos-amd64
+          asset_name: iodine-latest-macos-amd64.zip
           asset_content_type: application/zip
 
       - uses: eregon/publish-release@v1
