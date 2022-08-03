@@ -85,6 +85,8 @@ jobs:
         run: |
           ls -la
           pwd
+          cd odine-latest-windows.zip
+          ls -la
       - uses: actions/upload-release-asset@v1.0.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
