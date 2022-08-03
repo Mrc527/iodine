@@ -81,26 +81,24 @@ jobs:
           release_name: ${{steps.tag.outputs.tag}}
           draft: true
           prerelease: false
-      - name: ls
+      - name: Create Zip
         run: |
-          ls -la
-          pwd
-          cd iodine-latest-windows.zip
-          ls -la
+          zip -r iodine-latest-macos-amd64.zip iodine-latest-macos-amd64/*
+          zip -r iodine-latest-linux-amd64.zip iodine-latest-linux-amd64/*
       - uses: actions/upload-release-asset@v1.0.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ./iodine-latest-windows.zip/iodine-latest-windows.zip
-          asset_name: iodine-latest-windows.zip
+          asset_name: iodine-latest-windows
           asset_content_type: application/zip
       - uses: actions/upload-release-asset@v1.0.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./
+          asset_path: ./iodine-latest-linux-amd64.zip
           asset_name: iodine-latest-linux-amd64
           asset_content_type: application/zip
       - uses: actions/upload-release-asset@v1.0.1
@@ -108,7 +106,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./
+          asset_path: ./iodine-latest-macos-amd64.zip
           asset_name: iodine-latest-macos-amd64
           asset_content_type: application/zip
 
