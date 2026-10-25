@@ -28,29 +28,27 @@
 #include <fcntl.h>
 #include <time.h>
 
-#ifdef WINDOWS32
-#include "windows.h"
-#include <winsock2.h>
+#include "config.h"
+
+#ifdef WINDOWS
+#include "windows_dns.h"
 #else
-#include <grp.h>
-#include <pwd.h>
 #include <netdb.h>
 #endif
 
-#include "common.h"
-#include "tun.h"
 #include "client.h"
+#include "common.h"
+#include "compat.h"
+#include "encoding.h"
+#include "process.h"
+#include "run_as.h"
+#include "tun.h"
 #include "util.h"
 
-#ifdef WINDOWS32
-WORD req_version = MAKEWORD(2, 2);
-WSADATA wsa_data;
-#endif
-
-#if !defined(BSD) && !defined(__GLIBC__)
-static char *__progname;
-#else
+#if HAVE_PROGNAME
 extern char *__progname;
+#else
+static char *__progname;
 #endif
 
 #define PASSWORD_ENV_VAR "IODINE_PASS"
@@ -58,10 +56,11 @@ extern char *__progname;
 static void
 sighandler(int sig)
 {
+	(void)sig;
 	client_stop();
 }
 
-#if defined(__GNUC__) || defined(__clang__)
+#if HAVE_NORETURN_ATTR
 /* mark as no return to help some compilers to avoid warnings
  * about use of uninitialized variables */
 static inline void usage(void) __attribute__((noreturn));
@@ -116,7 +115,7 @@ static inline void usage(void)
 static void version(void)
 {
 	fprintf(stderr, "iodine IP over DNS tunneling client\n"
-			"Git version: %s\n", GITREVISION);
+			"Version: %s\n", IODINE_VERSION);
 
 	exit(0);
 }
@@ -126,10 +125,8 @@ int main(int argc, char **argv)
 	char *nameserv_host;
 	char *topdomain;
 	char *errormsg;
-#ifndef WINDOWS32
-	struct passwd *pw;
-#endif
 	char *username;
+	struct run_as_user *run_as;
 	char password[33];
 	int foreground;
 	char *newroot;
@@ -146,22 +143,17 @@ int main(int argc, char **argv)
 	int lazymode;
 	int selecttimeout;
 	int hostname_maxlen;
-#ifdef OPENBSD
 	int rtable = 0;
-#endif
 	struct sockaddr_storage nameservaddr;
-	int nameservaddr_len;
+	socklen_t nameservaddr_len;
 	int nameserv_family;
 
 	nameserv_host = NULL;
 	topdomain = NULL;
 	errormsg = NULL;
-#ifndef WINDOWS32
-	pw = NULL;
-#endif
 	username = NULL;
+	run_as = NULL;
 	memset(password, 0, 33);
-	srand(time(NULL));
 	foreground = 0;
 	newroot = NULL;
 	context = NULL;
@@ -177,14 +169,10 @@ int main(int argc, char **argv)
 	hostname_maxlen = 0xFF;
 	nameserv_family = AF_UNSPEC;
 
-#ifdef WINDOWS32
-	WSAStartup(req_version, &wsa_data);
-#endif
-
-	srand((unsigned) time(NULL));
+	network_init();
 	client_init();
 
-#if !defined(BSD) && !defined(__GLIBC__)
+#if !HAVE_PROGNAME
 	__progname = strrchr(argv[0], '/');
 	if (__progname == NULL)
 		__progname = argv[0];
@@ -223,14 +211,11 @@ int main(int argc, char **argv)
 		case 'd':
 			device = optarg;
 			break;
-#ifdef OPENBSD
 		case 'R':
 			rtable = atoi(optarg);
 			break;
-#endif
 		case 'P':
-			strncpy(password, optarg, sizeof(password));
-			password[sizeof(password)-1] = 0;
+			strlcpy(password, optarg, sizeof(password));
 
 			/* XXX: find better way of cleaning up ps(1) */
 			memset(optarg, 0, strlen(optarg));
@@ -279,7 +264,7 @@ int main(int argc, char **argv)
 		}
 	}
 
-	check_superuser();
+	check_privileges(username, 0);
 
 	argc -= optind;
 	argv += optind;
@@ -305,10 +290,9 @@ int main(int argc, char **argv)
 	}
 
 	if (nameserv_host) {
-		nameservaddr_len = get_addr(nameserv_host, DNS_PORT, nameserv_family, 0, &nameservaddr);
-		if (nameservaddr_len < 0) {
-			errx(1, "Cannot lookup nameserver '%s': %s ",
-				nameserv_host, gai_strerror(nameservaddr_len));
+		if (get_addr(nameserv_host, DNS_PORT, nameserv_family, 0,
+			     &nameservaddr, &nameservaddr_len)) {
+			errx(1, "Cannot lookup nameserver '%s'", nameserv_host);
 		}
 		client_set_nameserver(&nameservaddr, nameservaddr_len);
 	} else {
@@ -323,19 +307,30 @@ int main(int argc, char **argv)
 		/* NOTREACHED */
 	}
 
+	/* The topdomain plus a small fixed overhead (header + dot +
+	   safety, see hostname_need in encoding.c) must fit into the
+	   maximum hostname length, otherwise no tunnel payload can ever
+	   be carried - and the old code underflowed (size_t) in
+	   build_hostname with such a configuration. */
+	if (hostname_need(topdomain) > (size_t) hostname_maxlen) {
+		warnx("Topdomain too long for -M %d: needs at least %zu characters. "
+			"Use a shorter topdomain or a larger -M.",
+			hostname_maxlen, hostname_need(topdomain));
+		usage();
+		/* NOTREACHED */
+	}
+
 	client_set_selecttimeout(selecttimeout);
 	client_set_lazymode(lazymode);
 	client_set_topdomain(topdomain);
 	client_set_hostname_maxlen(hostname_maxlen);
 
 	if (username != NULL) {
-#ifndef WINDOWS32
-		if ((pw = getpwnam(username)) == NULL) {
+		if ((run_as = run_as_user_lookup(username)) == NULL) {
 			warnx("User %s does not exist!\n", username);
 			usage();
 			/* NOTREACHED */
 		}
-#endif
 	}
 
 	if (strlen(password) == 0) {
@@ -355,10 +350,8 @@ int main(int argc, char **argv)
 		retval = 1;
 		goto cleanup2;
 	}
-#ifdef OPENBSD
 	if (rtable > 0)
 		socket_setrtable(dns_fd, rtable);
-#endif
 
 	signal(SIGINT, sighandler);
 	signal(SIGTERM, sighandler);
@@ -377,25 +370,21 @@ int main(int argc, char **argv)
 
 	fprintf(stderr, "Connection setup complete, transmitting data.\n");
 
-	if (foreground == 0)
-		do_detach();
-
 	if (pidfile != NULL)
 		do_pidfile(pidfile);
+
+	if (foreground == 0)
+		do_detach();
 
 	if (newroot != NULL)
 		do_chroot(newroot);
 
-	if (username != NULL) {
-#ifndef WINDOWS32
-		gid_t gids[1];
-		gids[0] = pw->pw_gid;
-		if (setgroups(1, gids) < 0 || setgid(pw->pw_gid) < 0 || setuid(pw->pw_uid) < 0) {
+	if (run_as != NULL) {
+		if (run_as_user_switch(run_as)) {
 			warnx("Could not switch to user %s!\n", username);
 			usage();
 			/* NOTREACHED */
 		}
-#endif
 	}
 
 	if (context != NULL)

@@ -15,35 +15,41 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "config.h"
+
 #include <check.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#ifdef WINDOWS
+#include "windows_dns.h"
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#endif
 
 #include "common.h"
 #include "encoding.h"
 #include "user.h"
-#include "test.h"
+#include "test_main.h"
 
 START_TEST(test_init_users)
 {
 	in_addr_t ip;
-	char givenip[16];
+	char givenip[32];
 	int i;
 	int count;
 
 	ip = inet_addr("127.0.0.1");
 	count = init_users(ip, 27);
 	for (i = 0; i < count; i++) {
-		ck_assert(users[i].id == i);
-		ck_assert(users[i].q.id == 0);
-		ck_assert(users[i].inpacket.len == 0);
-		ck_assert(users[i].outpacket.len == 0);
+		ck_assert_int_eq(users[i].id, i);
+		ck_assert_int_eq(users[i].q.id, 0);
+		ck_assert_int_eq(users[i].inpacket.len, 0);
+		ck_assert_int_eq(users[i].outpacket.len, 0);
 		snprintf(givenip, sizeof(givenip), "127.0.0.%d", i + 2);
-		ck_assert(users[i].tun_ip == inet_addr(givenip));
+		ck_assert_uint_eq(users[i].tun_ip, inet_addr(givenip));
 	}
 }
 END_TEST
@@ -58,25 +64,25 @@ START_TEST(test_find_user_by_ip)
 	users[0].conn = CONN_DNS_NULL;
 
 	testip = (unsigned int) inet_addr("10.0.0.1");
-	ck_assert(find_user_by_ip(testip) == -1);
+	ck_assert_int_eq(find_user_by_ip(testip), -1);
 
 	testip = (unsigned int) inet_addr("127.0.0.2");
-	ck_assert(find_user_by_ip(testip) == -1);
+	ck_assert_int_eq(find_user_by_ip(testip), -1);
 
 	users[0].active = 1;
 
 	testip = (unsigned int) inet_addr("127.0.0.2");
-	ck_assert(find_user_by_ip(testip) == -1);
+	ck_assert_int_eq(find_user_by_ip(testip), -1);
 
 	users[0].last_pkt = time(NULL);
 
 	testip = (unsigned int) inet_addr("127.0.0.2");
-	ck_assert(find_user_by_ip(testip) == -1);
+	ck_assert_int_eq(find_user_by_ip(testip), -1);
 
 	users[0].authenticated = 1;
 
 	testip = (unsigned int) inet_addr("127.0.0.2");
-	ck_assert(find_user_by_ip(testip) == 0);
+	ck_assert_int_eq(find_user_by_ip(testip), 0);
 }
 END_TEST
 
@@ -87,17 +93,17 @@ START_TEST(test_all_users_waiting_to_send)
 	ip = inet_addr("127.0.0.1");
 	init_users(ip, 27);
 
-	ck_assert(all_users_waiting_to_send() == 1);
+	ck_assert_int_eq(all_users_waiting_to_send(), 1);
 
 	users[0].conn = CONN_DNS_NULL;
 	users[0].active = 1;
 
-	ck_assert(all_users_waiting_to_send() == 1);
+	ck_assert_int_eq(all_users_waiting_to_send(), 1);
 
 	users[0].last_pkt = time(NULL);
 	users[0].outpacket.len = 0;
 
-	ck_assert(all_users_waiting_to_send() == 0);
+	ck_assert_int_eq(all_users_waiting_to_send(), 0);
 
 #ifdef OUTPACKETQ_LEN
 	users[0].outpacketq_filled = 1;
@@ -105,14 +111,15 @@ START_TEST(test_all_users_waiting_to_send)
 	users[0].outpacket.len = 44;
 #endif
 
-	ck_assert(all_users_waiting_to_send() == 1);
+	ck_assert_int_eq(all_users_waiting_to_send(), 1);
 }
 END_TEST
 
 START_TEST(test_find_available_user)
 {
 	in_addr_t ip;
-	int i;
+	unsigned int i;
+	unsigned int user;
 
 	ip = inet_addr("127.0.0.1");
 	init_users(ip, 24);
@@ -120,57 +127,64 @@ START_TEST(test_find_available_user)
 	for (i = 0; i < USERS; i++) {
 		users[i].authenticated = 1;
 		users[i].authenticated_raw = 1;
-		ck_assert(find_available_user() == i);
-		ck_assert(users[i].authenticated == 0);
-		ck_assert(users[i].authenticated_raw == 0);
+		ck_assert_int_ne(find_available_user(&user), 0);
+		ck_assert_uint_eq(user, i);
+		ck_assert_int_eq(users[i].authenticated, 0);
+		ck_assert_int_eq(users[i].authenticated_raw, 0);
 	}
 
 	for (i = 0; i < USERS; i++) {
-		ck_assert(find_available_user() == -1);
+		ck_assert_int_eq(find_available_user(&user), 0);
 	}
 
 	users[3].active = 0;
 
-	ck_assert(find_available_user() == 3);
-	ck_assert(find_available_user() == -1);
+	ck_assert_int_ne(find_available_user(&user), 0);
+	ck_assert_uint_eq(user, 3);
+	ck_assert_int_eq(find_available_user(&user), 0);
 
 	users[3].last_pkt = 55;
 
-	ck_assert(find_available_user() == 3);
-	ck_assert(find_available_user() == -1);
+	ck_assert_int_ne(find_available_user(&user), 0);
+	ck_assert_uint_eq(user, 3);
+	ck_assert_int_eq(find_available_user(&user), 0);
 }
 END_TEST
 
 START_TEST(test_find_available_user_small_net)
 {
 	in_addr_t ip;
-	int i;
+	unsigned int i;
+	unsigned int user;
 
 	ip = inet_addr("127.0.0.1");
 	init_users(ip, 29); /* this should result in 5 enabled users */
 
 	for (i = 0; i < 5; i++) {
-		ck_assert(find_available_user() == i);
+		ck_assert_int_ne(find_available_user(&user), 0);
+		ck_assert_uint_eq(user, i);
 	}
 
 	for (i = 0; i < USERS; i++) {
-		ck_assert(find_available_user() == -1);
+		ck_assert_int_eq(find_available_user(&user), 0);
 	}
 
 	users[3].active = 0;
 
-	ck_assert(find_available_user() == 3);
-	ck_assert(find_available_user() == -1);
+	ck_assert_int_ne(find_available_user(&user), 0);
+	ck_assert_uint_eq(user, 3);
+	ck_assert_int_eq(find_available_user(&user), 0);
 
 	users[3].last_pkt = 55;
 
-	ck_assert(find_available_user() == 3);
-	ck_assert(find_available_user() == -1);
+	ck_assert_int_ne(find_available_user(&user), 0);
+	ck_assert_uint_eq(user, 3);
+	ck_assert_int_eq(find_available_user(&user), 0);
 }
 END_TEST
 
 TCase *
-test_user_create_tests()
+test_create(void)
 {
 	TCase *tc;
 

@@ -6,26 +6,53 @@ on:
   pull_request:
     branches: [ master ]
 
+permissions:
+    contents: read
+
 jobs:
   build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64 GCC (UCRT64)
+            runner: windows-latest
+            msystem: UCRT64
+            pkg_prefix: mingw-w64-ucrt-x86_64
 
-    runs-on: windows-latest
+          - name: x86_64 Clang (CLANG64)
+            runner: windows-latest
+            msystem: CLANG64
+            pkg_prefix: mingw-w64-clang-x86_64
+
+          - name: ARM64 Clang (CLANGARM64)
+            runner: windows-11-arm
+            msystem: CLANGARM64
+            pkg_prefix: mingw-w64-clang-aarch64
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
     defaults:
       run:
         shell: msys2 {0}
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v7
     - uses: msys2/setup-msys2@v2
       with:
-        msystem: MINGW64
+        msystem: ${{ matrix.msystem }}
         update: false
-        install: git make mingw-w64-x86_64-toolchain mingw-w64-x86_64-zlib
-    - name: make
-      run: make TARGETOS=windows32
-    - name: 'Upload Artifact'
-      uses: actions/upload-artifact@v3
-      with:
-        name: bin
-        path: bin
-        retention-days: 5
+        install: >-
+          git
+          ${{ matrix.pkg_prefix }}-toolchain
+          ${{ matrix.pkg_prefix }}-zlib
+          ${{ matrix.pkg_prefix }}-meson
+          ${{ matrix.pkg_prefix }}-check
+    - name: meson setup
+      run: meson setup build
+    - name: build
+      working-directory: build
+      run: ninja
+    - name: run tests
+      working-directory: build
+      run: ninja test

@@ -22,7 +22,7 @@
 #include <errno.h>
 
 #include "encoding.h"
-#include "test.h"
+#include "test_main.h"
 
 #define TUPLES 5
 
@@ -48,7 +48,7 @@ START_TEST(test_base32_encode)
 	len = sizeof(buf);
 	val = base32_ops.encode(buf, &len, testpairs[_i].a, strlen(testpairs[_i].a));
 
-	ck_assert(val == strlen(testpairs[_i].b));
+	ck_assert_int_eq(val, strlen(testpairs[_i].b));
 	ck_assert_str_eq(buf, testpairs[_i].b);
 }
 END_TEST
@@ -62,7 +62,7 @@ START_TEST(test_base32_decode)
 	len = sizeof(buf);
 	val = base32_ops.decode(buf, &len, testpairs[_i].b, strlen(testpairs[_i].b));
 
-	ck_assert(val == strlen(testpairs[_i].a));
+	ck_assert_int_eq(val, strlen(testpairs[_i].a));
 	ck_assert_str_eq(buf, testpairs[_i].a);
 }
 END_TEST
@@ -74,7 +74,7 @@ START_TEST(test_base32_5to8_8to5)
 
 	for (i = 0; i < 32; i++) {
 		c = b32_5to8(i);
-		ck_assert(b32_8to5(c) == i);
+		ck_assert_int_eq(b32_8to5(c), i);
 	}
 }
 END_TEST
@@ -85,7 +85,7 @@ START_TEST(test_base32_blksize)
 	size_t enclen;
 	char *rawbuf;
 	char *encbuf;
-	int i;
+	unsigned int i;
 	int val;
 
 	rawlen = base32_ops.blocksize_raw;
@@ -101,25 +101,27 @@ START_TEST(test_base32_blksize)
 
 	val = base32_ops.encode(encbuf, &enclen, rawbuf, rawlen);
 
-	ck_assert_msg(rawlen == 5, "raw length was %zu not 5", rawlen);
-	ck_assert_msg(enclen == 5, "encoded %zu bytes, not 5", enclen);
-	ck_assert_msg(val == 8, "encoded string %s was length %d", encbuf, val);
+	ck_assert_int_eq(rawlen, 5);
+	ck_assert_int_eq(enclen, 5);
+	ck_assert_int_eq(val, 8);
 
 	memset(rawbuf, 0, rawlen + 16);
 
 	enclen = val;
 	val = base32_ops.decode(rawbuf, &rawlen, encbuf, enclen);
 
-	ck_assert_msg(rawlen == 5, "raw length was %zu not 5", rawlen);
-	ck_assert_msg(val == 5, "val was not 5 but %d", val);
+	ck_assert_int_eq(rawlen, 5);
+	ck_assert_int_eq(val, 5);
 	for (i = 0; i < rawlen; i++) {
-		ck_assert(rawbuf[i] == 'A');
+		ck_assert_int_eq(rawbuf[i], 'A');
 	}
+	free(rawbuf);
+	free(encbuf);
 }
 END_TEST
 
 TCase *
-test_base32_create_tests()
+test_create(void)
 {
 	TCase *tc;
 

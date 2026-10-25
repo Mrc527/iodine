@@ -28,42 +28,40 @@
 #include <time.h>
 #include <zlib.h>
 
-#include "common.h"
+#include "config.h"
 
-#ifdef WINDOWS32
-#include "windows.h"
-#include <winsock2.h>
+#include "common.h"
+#include "compat.h"
+#include "process.h"
+
+#ifdef WINDOWS
+#include "windows_dns.h"
 #else
 #include <arpa/nameser.h>
 #ifdef DARWIN
-#define BIND_8_COMPAT
 #include <arpa/nameser_compat.h>
 #endif
 #define _XPG4_2
 #include <netinet/in_systm.h>
 #include <netinet/ip.h>
-#include <grp.h>
 #include <sys/uio.h>
-#include <pwd.h>
 #include <netdb.h>
+#endif
+#if HAVE_SYSLOG
 #include <syslog.h>
 #endif
 
 #include "dns.h"
 #include "encoding.h"
-#include "user.h"
-#include "login.h"
-#include "tun.h"
 #include "fw_query.h"
+#include "login.h"
+#include "run_as.h"
+#include "tun.h"
+#include "user.h"
 #include "version.h"
 
-#ifdef HAVE_SYSTEMD
+#if HAVE_SYSTEMD
 # include <systemd/sd-daemon.h>
-#endif
-
-#ifdef WINDOWS32
-WORD req_version = MAKEWORD(2, 2);
-WSADATA wsa_data;
 #endif
 
 #define PASSWORD_ENV_VAR "IODINED_PASS"
@@ -95,10 +93,17 @@ static in_addr_t ns_ip;
 static int bind_port;
 static int debug;
 
-#if !defined(BSD) && !defined(__GLIBC__)
-static char *__progname;
-#else
+#if HAVE_PROGNAME
 extern char *__progname;
+#else
+static char *__progname;
+#endif
+
+#if HAVE_NORETURN_ATTR
+/* mark as no return to help some compilers to avoid warnings
+ * about use of uninitialized variables */
+static inline void usage(void) __attribute__((noreturn));
+static inline void help(FILE * stream) __attribute__((noreturn));
 #endif
 
 /* Struct with IPv4 and IPv6 file descriptors.
@@ -111,7 +116,7 @@ struct dnsfd {
 };
 
 static int read_dns(int fd, struct dnsfd *dns_fds, int tun_fd, struct query *q);
-static void write_dns(int fd, struct query *q, const char *data, int datalen, char downenc);
+static void write_dns(int fd, struct query *q, const char *data, size_t datalen, char downenc);
 static void handle_full_packet(int tun_fd, struct dnsfd *dns_fds, int userid);
 
 static int
@@ -136,9 +141,8 @@ get_external_ip(struct in_addr *ip)
 	memset(&query, 0, sizeof(query));
 
 	query.type = T_A;
-	res = get_addr("resolver1.opendns.com", 53, AF_INET, 0, &query.destination);
-	if (res < 0) return 1;
-	query.dest_len = res;
+	if(get_addr("resolver1.opendns.com", 53, AF_INET, 0, &query.destination, &query.dest_len))
+		return 1;
 
 	fd = open_dns_from_host(NULL, 0, AF_INET, AI_PASSIVE);
 	if (fd < 0) return 2;
@@ -150,7 +154,11 @@ get_external_ip(struct in_addr *ip)
 		struct timeval tv;
 
 		if (attempt) fprintf(stderr, "Retrying external IP lookup\n");
-		query.id = rand();
+		{
+			uint16_t rid;
+			secure_random(&rid, sizeof(rid));
+			query.id = rid;
+		}
 		buflen = sizeof(buf);
 		buflen = dns_encode(buf, buflen, &query, QR_QUERY, target, strlen(target));
 		if (buflen < 0) continue;
@@ -179,6 +187,7 @@ get_external_ip(struct in_addr *ip)
 static void
 sigint(int sig)
 {
+	(void)sig;
 	running = 0;
 }
 
@@ -250,10 +259,10 @@ static int check_authenticated_user_and_ip_and_options(int userid, struct query 
 	return 0;
 }
 
-static void send_raw(int fd, char *buf, int buflen, int user, int cmd, struct query *q)
+static void send_raw(int fd, char *buf, size_t buflen, int user, int cmd, struct query *q)
 {
 	char packet[4096];
-	int len;
+	size_t len;
 
 	len = MIN(sizeof(packet) - RAW_HDR_LEN, buflen);
 
@@ -266,7 +275,7 @@ static void send_raw(int fd, char *buf, int buflen, int user, int cmd, struct qu
 	packet[RAW_HDR_CMD] = cmd | (user & 0x0F);
 
 	if (debug >= 2) {
-		fprintf(stderr, "TX-raw: client %s, cmd %d, %d bytes\n",
+		fprintf(stderr, "TX-raw: client %s, cmd %d, %zu bytes\n",
 			format_addr(&q->from, q->fromlen), cmd, len);
 	}
 
@@ -274,7 +283,7 @@ static void send_raw(int fd, char *buf, int buflen, int user, int cmd, struct qu
 }
 
 
-static void start_new_outpacket(int userid, char *data, int datalen)
+static void start_new_outpacket(int userid, char *data, unsigned int datalen)
 /* Copies data to .outpacket and resets all counters.
    data is expected to be compressed already. */
 {
@@ -290,7 +299,7 @@ static void start_new_outpacket(int userid, char *data, int datalen)
 
 #ifdef OUTPACKETQ_LEN
 
-static int save_to_outpacketq(int userid, char *data, int datalen)
+static int save_to_outpacketq(int userid, char *data, unsigned int datalen)
 /* Find space in outpacket-queue and store data (expected compressed already).
    Returns: 1 = okay, 0 = no space. */
 {
@@ -365,17 +374,17 @@ static int get_from_outpacketq(int userid)
    number, and of course data.)
 */
 
-static void save_to_dnscache(int userid, struct query *q, char *answer, int answerlen)
+static void save_to_dnscache(int userid, struct query *q, char *answer, unsigned int answerlen)
 /* Store answer in our little DNS cache. */
 {
 	int fill;
 
-	if (answerlen > sizeof(users[userid].dnscache_answer[fill]))
-		return;  /* can't store this */
-
 	fill = users[userid].dnscache_lastfilled + 1;
 	if (fill >= DNSCACHE_LEN)
 		fill = 0;
+
+	if (answerlen > sizeof(users[userid].dnscache_answer[fill]))
+		return;  /* can't store this */
 
 	memcpy(&(users[userid].dnscache_q[fill]), q, sizeof(struct query));
 	memcpy(users[userid].dnscache_answer[fill], answer, answerlen);
@@ -560,7 +569,7 @@ static inline int answer_from_qmem_data(int dns_fd, int userid,
 static int send_chunk_or_dataless(int dns_fd, int userid, struct query *q)
 {
 	char pkt[4096];
-	int datalen = 0;
+	unsigned int datalen = 0;
 	int last = 0;
 
 	/* If re-sent too many times, drop entire packet */
@@ -598,7 +607,7 @@ static int send_chunk_or_dataless(int dns_fd, int userid, struct query *q)
 		((users[userid].outpacket.fragment & 15) << 1) | (last & 1);
 
 	if (debug >= 1) {
-		fprintf(stderr, "OUT  pkt seq# %d, frag %d (last=%d), offset %d, fragsize %d, total %d, to user %d\n",
+		fprintf(stderr, "OUT  pkt seq# %d, frag %d (last=%d), offset %d, fragsize %u, total %d, to user %d\n",
 			users[userid].outpacket.seqno & 7, users[userid].outpacket.fragment & 15,
 			last, users[userid].outpacket.offset, datalen, users[userid].outpacket.len, userid);
 	}
@@ -705,13 +714,13 @@ static void send_version_response(int fd, version_ack_t ack, uint32_t payload,
 
 	switch (ack) {
 	case VERSION_ACK:
-		strncpy(out, "VACK", sizeof(out));
+		strlcpy(out, "VACK", sizeof(out));
 		break;
 	case VERSION_NACK:
-		strncpy(out, "VNAK", sizeof(out));
+		strlcpy(out, "VNAK", sizeof(out));
 		break;
 	case VERSION_FULL:
-		strncpy(out, "VFUL", sizeof(out));
+		strlcpy(out, "VFUL", sizeof(out));
 		break;
 	}
 
@@ -770,7 +779,7 @@ handle_null_request(int tun_fd, int dns_fd, struct dnsfd *dns_fds, struct query 
 	char out[64*1024];
 	char unpacked[64*1024];
 	char *tmp[2];
-	int userid;
+	unsigned int userid;
 	int read;
 
 	userid = -1;
@@ -779,7 +788,7 @@ handle_null_request(int tun_fd, int dns_fd, struct dnsfd *dns_fds, struct query 
 	if (domain_len < 2)
 		return;
 
-	memcpy(in, q->name, MIN(domain_len, sizeof(in)));
+	memcpy(in, q->name, MIN((unsigned int)domain_len, sizeof(in)));
 
 	if (in[0] == 'V' || in[0] == 'v') {
 		int version = 0;
@@ -795,11 +804,19 @@ handle_null_request(int tun_fd, int dns_fd, struct dnsfd *dns_fds, struct query 
 		}
 
 		if (version == PROTOCOL_VERSION) {
-			userid = find_available_user();
-			if (userid >= 0) {
+			if (find_available_user(&userid)) {
 				int i;
 
-				users[userid].seed = rand();
+				{
+					int newseed;
+					/* CSPRNG seed: the login challenge is
+					   MD5(password XOR seed), so the seed
+					   must not be predictable from server
+					   start time (rand() after
+					   srand(time(NULL)) was). */
+					secure_random(&newseed, sizeof(newseed));
+					users[userid].seed = newseed;
+				}
 				/* Store remote IP number */
 				memcpy(&(users[userid].host), &(q->from), q->fromlen);
 				users[userid].hostlen = q->fromlen;
@@ -1131,7 +1148,9 @@ handle_null_request(int tun_fd, int dns_fd, struct dnsfd *dns_fds, struct query 
 		} else {
 			char buf[2048];
 			int i;
-			unsigned int v = ((unsigned int) rand()) & 0xff ;
+			unsigned int v;
+			secure_random(&v, sizeof(v));
+			v &= 0xff;
 
 			memset(buf, 0, sizeof(buf));
 			buf[0] = (req_frag_size >> 8) & 0xff;
@@ -1144,7 +1163,7 @@ handle_null_request(int tun_fd, int dns_fd, struct dnsfd *dns_fds, struct query 
 		}
 		return;
 	} else if (in[0] == 'N' || in[0] == 'n') {
-		int max_frag_size;
+		unsigned int max_frag_size;
 
 		read = unpack_data(unpacked, sizeof(unpacked), &(in[1]), domain_len - 1, &base32_ops);
 
@@ -1432,7 +1451,7 @@ handle_null_request(int tun_fd, int dns_fd, struct dnsfd *dns_fds, struct query 
 					   users[userid].encoder);
 
 			/* copy to packet buffer, update length */
-			read = MIN(read, sizeof(users[userid].inpacket.data) - users[userid].inpacket.offset);
+			read = MIN((unsigned int)read, sizeof(users[userid].inpacket.data) - users[userid].inpacket.offset);
 			memcpy(users[userid].inpacket.data + users[userid].inpacket.offset, unpacked, read);
 			users[userid].inpacket.len += read;
 			users[userid].inpacket.offset += read;
@@ -1598,6 +1617,27 @@ handle_a_request(int dns_fd, struct query *q, int fakeip)
 }
 
 static void
+handle_underscore_request(int dns_fd, struct query *q, const char *topdomain)
+{
+	char buf[64*1024];
+	int len;
+
+	len = dns_encode_nxdomain(buf, sizeof(buf), q, topdomain);
+	if (len < 1) {
+		warnx("dns_encode_nxdomain doesn't fit");
+		return;
+	}
+
+	if (debug >= 2) {
+		fprintf(stderr, "TX: client %s, type %d, name %s, %d bytes NXDOMAIN reply\n",
+			format_addr(&q->from, q->fromlen), q->type, q->name, len);
+	}
+	if (sendto(dns_fd, buf, len, 0, (struct sockaddr*)&q->from, q->fromlen) <= 0) {
+		warn("nxdomain reply send error");
+	}
+}
+
+static void
 forward_query(int bind_fd, struct query *q)
 {
 	char buf[64*1024];
@@ -1716,6 +1756,18 @@ tunnel_dns(int tun_fd, int dns_fd, struct dnsfd *dns_fds, int bind_fd)
 		    (q.name[2] == 'w' || q.name[2] == 'W') &&
 		     q.name[3] == '.') {
 			handle_a_request(dns_fd, &q, 1);
+			return 0;
+		}
+
+		/* Handle A-type query for _.***.topdomain. It happens when
+		 *
+		 * https://datatracker.ietf.org/doc/html/rfc7816 (qname minimisation)
+		 * https://github.com/isc-projects/bind9/commit/ae52c2117eba9fa0778125f4e10834d673ab811b
+		 * */
+		if (q.type == T_A &&
+		    (q.name[0] == '_') &&
+		     q.name[1] == '.') {
+			handle_underscore_request(dns_fd, &q, topdomain);
 			return 0;
 		}
 
@@ -2039,7 +2091,7 @@ read_dns(int fd, struct dnsfd *dns_fds, int tun_fd, struct query *q)
 	socklen_t addrlen;
 	char packet[64*1024];
 	int r;
-#ifndef WINDOWS32
+#ifndef WINDOWS
 	char control[CMSG_SPACE(sizeof (struct in6_pktinfo))];
 	struct msghdr msg;
 	struct iovec iov;
@@ -2058,10 +2110,11 @@ read_dns(int fd, struct dnsfd *dns_fds, int tun_fd, struct query *q)
 	msg.msg_flags = 0;
 
 	r = recvmsg(fd, &msg, 0);
+	addrlen = msg.msg_namelen;
 #else
 	addrlen = sizeof(struct sockaddr_storage);
 	r = recvfrom(fd, packet, sizeof(packet), 0, (struct sockaddr*)&from, &addrlen);
-#endif /* !WINDOWS32 */
+#endif /* !WINDOWS */
 
 	if (r > 0) {
 		memcpy((struct sockaddr*)&q->from, (struct sockaddr*)&from, addrlen);
@@ -2075,7 +2128,7 @@ read_dns(int fd, struct dnsfd *dns_fds, int tun_fd, struct query *q)
 			return 0;
 		}
 
-#ifndef WINDOWS32
+#ifndef WINDOWS
 		memset(&q->destination, 0, sizeof(struct sockaddr_storage));
 		/* Read destination IP address */
 		for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
@@ -2114,7 +2167,7 @@ read_dns(int fd, struct dnsfd *dns_fds, int tun_fd, struct query *q)
 }
 
 static size_t
-write_dns_nameenc(char *buf, size_t buflen, const char *data, int datalen, char downenc)
+write_dns_nameenc(char *buf, size_t buflen, const char *data, size_t datalen, char downenc)
 /* Returns #bytes of data that were encoded */
 {
 	static int td1 = 0;
@@ -2184,7 +2237,7 @@ write_dns_nameenc(char *buf, size_t buflen, const char *data, int datalen, char 
 }
 
 static void
-write_dns(int fd, struct query *q, const char *data, int datalen, char downenc)
+write_dns(int fd, struct query *q, const char *data, size_t datalen, char downenc)
 {
 	char buf[64*1024];
 	int len = 0;
@@ -2200,8 +2253,8 @@ write_dns(int fd, struct query *q, const char *data, int datalen, char downenc)
 	} else if (q->type == T_MX || q->type == T_SRV) {
 		char mxbuf[64*1024];
 		char *b = mxbuf;
-		int offset = 0;
-		int res;
+		unsigned int offset = 0;
+		unsigned int res;
 
 		while (1) {
 			res = write_dns_nameenc(b, sizeof(mxbuf) - (b - mxbuf),
@@ -2264,7 +2317,7 @@ write_dns(int fd, struct query *q, const char *data, int datalen, char downenc)
 	}
 
 	if (debug >= 2) {
-		fprintf(stderr, "TX: client %s, type %d, name %s, %d bytes data\n",
+		fprintf(stderr, "TX: client %s, type %d, name %s, %zu bytes data\n",
 			format_addr(&q->from, q->fromlen), q->type, q->name, datalen);
 	}
 
@@ -2332,14 +2385,14 @@ static void version(void)
 {
 	fprintf(stderr,
 		"iodine IP over DNS tunneling server\n"
-		"Git version: %s\n", GITREVISION);
+		"Version: %s\n", IODINE_VERSION);
 
 	exit(0);
 }
 
 static void prepare_dns_fd(int fd)
 {
-#ifndef WINDOWS32
+#ifndef WINDOWS
 	int flag = 1;
 
 	/* To get destination address from each UDP datagram, see read_dns() */
@@ -2352,6 +2405,7 @@ static void prepare_dns_fd(int fd)
 #endif
 
 #endif
+	(void)fd;
 }
 
 int
@@ -2360,11 +2414,9 @@ main(int argc, char **argv)
 	char *listen_ip4;
 	char *listen_ip6;
 	char *errormsg;
-#ifndef WINDOWS32
-	struct passwd *pw;
-#endif
 	int foreground;
 	char *username;
+	struct run_as_user *run_as;
 	char *newroot;
 	char *context;
 	char *device;
@@ -2384,21 +2436,20 @@ main(int argc, char **argv)
 	int skipipconfig;
 	char *netsize;
 	int ns_get_externalip;
+	struct in_addr resolved_external_ip;
 	int retval;
 	int max_idle_time = 0;
 	struct sockaddr_storage dns4addr;
-	int dns4addr_len;
+	socklen_t dns4addr_len;
 	struct sockaddr_storage dns6addr;
-	int dns6addr_len;
-#ifdef HAVE_SYSTEMD
+	socklen_t dns6addr_len;
+#if HAVE_SYSTEMD
 	int nb_fds;
 #endif
 
-#ifndef WINDOWS32
-	pw = NULL;
-#endif
 	errormsg = NULL;
 	username = NULL;
+	run_as = NULL;
 	newroot = NULL;
 	context = NULL;
 	device = NULL;
@@ -2412,20 +2463,21 @@ main(int argc, char **argv)
 	port = 53;
 	ns_ip = INADDR_ANY;
 	ns_get_externalip = 0;
+	resolved_external_ip.s_addr = INADDR_ANY;
 	addrfamily = AF_UNSPEC;
 	check_ip = 1;
 	skipipconfig = 0;
 	debug = 0;
 	netmask = 27;
 	pidfile = NULL;
+	dns4addr_len = 0;
+	dns6addr_len = 0;
 
 	retval = 0;
 
-#ifdef WINDOWS32
-	WSAStartup(req_version, &wsa_data);
-#endif
+	network_init();
 
-#if !defined(BSD) && !defined(__GLIBC__)
+#if !HAVE_PROGNAME
 	__progname = strrchr(argv[0], '/');
 	if (__progname == NULL)
 		__progname = argv[0];
@@ -2433,7 +2485,6 @@ main(int argc, char **argv)
 		__progname++;
 #endif
 
-	srand(time(NULL));
 	fw_query_init();
 
 	while ((choice = getopt(argc, argv, "46vcsfhDu:t:d:m:l:L:p:n:b:P:z:F:i:")) != -1) {
@@ -2501,8 +2552,7 @@ main(int argc, char **argv)
 			max_idle_time = atoi(optarg);
 			break;
 		case 'P':
-			strncpy(password, optarg, sizeof(password));
-			password[sizeof(password)-1] = 0;
+			strlcpy(password, optarg, sizeof(password));
 
 			/* XXX: find better way of cleaning up ps(1) */
 			memset(optarg, 0, strlen(optarg));
@@ -2519,10 +2569,12 @@ main(int argc, char **argv)
 	argc -= optind;
 	argv += optind;
 
-	check_superuser();
-
-	if (argc != 2)
+	if (argc != 2) {
 		usage();
+		/* NOTREACHED */
+	}
+
+	check_privileges(username, port);
 
 	netsize = strchr(argv[0], '/');
 	if (netsize) {
@@ -2546,22 +2598,23 @@ main(int argc, char **argv)
 	}
 
 	if (username != NULL) {
-#ifndef WINDOWS32
-		if ((pw = getpwnam(username)) == NULL) {
+		if ((run_as = run_as_user_lookup(username)) == NULL) {
 			warnx("User %s does not exist!", username);
 			usage();
+			/* NOTREACHED */
 		}
-#endif
 	}
 
 	if (mtu <= 0) {
 		warnx("Bad MTU given.");
 		usage();
+		/* NOTREACHED */
 	}
 
 	if (port < 1 || port > 65535) {
 		warnx("Bad port number given.");
 		usage();
+		/* NOTREACHED */
 	}
 
 	if (port != 53) {
@@ -2576,17 +2629,15 @@ main(int argc, char **argv)
 	}
 	if (addrfamily == AF_UNSPEC || addrfamily == AF_INET) {
 		if (listen_ip4 && strcmp("external", listen_ip4) == 0) {
-			struct in_addr extip;
-			int res = get_external_ip(&extip);
+			int res = get_external_ip(&resolved_external_ip);
 			if (res) {
 				fprintf(stderr, "Failed to get external IP via DNS query.\n");
 				exit(3);
 			}
-			listen_ip4 = inet_ntoa(extip);
+			listen_ip4 = inet_ntoa(resolved_external_ip);
 			fprintf(stderr, "Will listen on external IP %s\n", listen_ip4);
 		}
-		dns4addr_len = get_addr(listen_ip4, port, AF_INET, AI_PASSIVE, &dns4addr);
-		if (dns4addr_len < 0) {
+		if (get_addr(listen_ip4, port, AF_INET, AI_PASSIVE, &dns4addr, &dns4addr_len)) {
 			warnx("Bad IPv4 address to listen on: '%s'", listen_ip4);
 			usage();
 		}
@@ -2594,8 +2645,7 @@ main(int argc, char **argv)
 		listen_ip4 = NULL;
 	}
 	if (addrfamily == AF_UNSPEC || addrfamily == AF_INET6) {
-		int addr6_res = get_addr(listen_ip6, port, AF_INET6, AI_PASSIVE, &dns6addr);
-		if (addr6_res < 0) {
+		if (get_addr(listen_ip6, port, AF_INET6, AI_PASSIVE, &dns6addr, &dns6addr_len)) {
 			if (listen_ip6 == NULL) {
 				if (addrfamily == AF_INET6) {
 					fprintf(stderr, "IPv6 not supported");
@@ -2605,13 +2655,11 @@ main(int argc, char **argv)
 					addrfamily = AF_INET;
 				}
 			} else {
-				warnx("Failed to get IPv6 address to listen on: '%s': %s",
-					listen_ip6, gai_strerror(addr6_res));
+				warnx("Failed to get IPv6 address to listen on: '%s'",
+					listen_ip6);
 				usage();
 				/* NOTREACHED */
 			}
-		} else {
-			dns6addr_len = addr6_res;
 		}
 		// Use dns6addr from here on.
 		listen_ip6 = NULL;
@@ -2636,14 +2684,15 @@ main(int argc, char **argv)
 	}
 
 	if (ns_get_externalip) {
-		struct in_addr extip;
-		int res = get_external_ip(&extip);
-		if (res) {
-			fprintf(stderr, "Failed to get external IP via DNS query.\n");
-			exit(3);
+		if (resolved_external_ip.s_addr == INADDR_ANY) {
+			int res = get_external_ip(&resolved_external_ip);
+			if (res) {
+				fprintf(stderr, "Failed to get external IP via DNS query.\n");
+				exit(3);
+			}
 		}
-		ns_ip = extip.s_addr;
-		fprintf(stderr, "Using %s as external IP.\n", inet_ntoa(extip));
+		ns_ip = resolved_external_ip.s_addr;
+		fprintf(stderr, "Using %s as external IP.\n", inet_ntoa(resolved_external_ip));
 	}
 
 	if (ns_ip == INADDR_NONE) {
@@ -2682,7 +2731,7 @@ main(int argc, char **argv)
 		free((void*) other_ip);
 	}
 
-#ifdef HAVE_SYSTEMD
+#if HAVE_SYSTEMD
 	nb_fds = sd_listen_fds(0);
 	if (nb_fds < 0) {
 		warnx("Failed to receive file descriptors from systemd: %s", strerror(-nb_fds));
@@ -2703,7 +2752,7 @@ main(int argc, char **argv)
 			retval = 1;
 			goto cleanup;
 		}
-#ifdef HAVE_SYSTEMD
+#if HAVE_SYSTEMD
 	} else if (nb_fds <= 2) {
 		/* systemd may pass up to two sockets, for ip4 and ip6, try to figure out
 			which is which */
@@ -2747,16 +2796,16 @@ main(int argc, char **argv)
 	}
 	fprintf(stderr, "Listening to dns for domain %s\n", topdomain);
 
-	if (foreground == 0)
-		do_detach();
-
 	if (pidfile != NULL)
 		do_pidfile(pidfile);
 
+	if (foreground == 0)
+		do_detach();
+
 #ifdef FREEBSD
-	tzsetwall();
+	tzset();
 #endif
-#ifndef WINDOWS32
+#if HAVE_SYSLOG
 	openlog(__progname, LOG_NDELAY, LOG_DAEMON);
 #endif
 
@@ -2764,15 +2813,12 @@ main(int argc, char **argv)
 		do_chroot(newroot);
 
 	signal(SIGINT, sigint);
-	if (username != NULL) {
-#ifndef WINDOWS32
-		gid_t gids[1];
-		gids[0] = pw->pw_gid;
-		if (setgroups(1, gids) < 0 || setgid(pw->pw_gid) < 0 || setuid(pw->pw_uid) < 0) {
+	if (run_as != NULL) {
+		if (run_as_user_switch(run_as)) {
 			warnx("Could not switch to user %s!\n", username);
 			usage();
+			/* NOTREACHED */
 		}
-#endif
 	}
 
 	if (context != NULL)

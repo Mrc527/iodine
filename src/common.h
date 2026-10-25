@@ -32,9 +32,11 @@
 #define RAW_HDR_GET_USR(x) ((x)[RAW_HDR_CMD] & RAW_HDR_USR_MASK)
 extern const unsigned char raw_header[RAW_HDR_LEN];
 
+#include "config.h"
+
 #include <stdarg.h>
-#ifdef WINDOWS32
-#include "windows.h"
+#ifdef WINDOWS
+#include "windows_dns.h"
 #else
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -76,9 +78,9 @@ extern const unsigned char raw_header[RAW_HDR_LEN];
 
 struct packet
 {
-	int len;		/* Total packet length */
-	int sentlen;		/* Length of chunk currently transmitted */
-	int offset;		/* Current offset */
+	unsigned int len;	/* Total packet length */
+	unsigned int sentlen;	/* Length of chunk currently transmitted */
+	unsigned int offset;	/* Current offset */
 	char data[64*1024];	/* The data */
 	char seqno;		/* The packet sequence number */
 	char fragment;		/* Fragment index */
@@ -104,25 +106,15 @@ enum connection {
 	CONN_MAX
 };
 
-#ifdef WINDOWS32
-static inline void check_superuser(void)
-{
-}
-#else
-void check_superuser(void);
-#endif
-char *format_addr(struct sockaddr_storage *sockaddr, int sockaddr_len);
-int get_addr(char *, int, int, int, struct sockaddr_storage *);
-int open_dns(struct sockaddr_storage *, size_t);
-int open_dns_opt(struct sockaddr_storage *sockaddr, size_t sockaddr_len,
-		 int v6only);
+void check_privileges(char *username, int port);
+char *format_addr(struct sockaddr_storage *sockaddr, socklen_t sockaddr_len);
+int get_addr(char *host, int port, int addr_family, int flags, struct sockaddr_storage *out, socklen_t *outlen);
+int open_dns(struct sockaddr_storage *, socklen_t);
+int open_dns_opt(struct sockaddr_storage *sockaddr, socklen_t sockaddr_len, int v6only);
 int open_dns_from_host(char *host, int port, int addr_family, int flags);
 void close_dns(int);
 
-void do_chroot(char *);
-void do_setcon(char *);
-void do_detach(void);
-void do_pidfile(char *);
+int build_netmask(int netbits, struct in_addr *addr);
 
 void read_password(char*, size_t);
 
@@ -130,23 +122,13 @@ int check_topdomain(char *, int, char **);
 
 int query_datalen(const char *qname, const char *topdomain);
 
-#if defined(WINDOWS32) || defined(ANDROID)
-#ifndef ANDROID
-int inet_aton(const char *cp, struct in_addr *inp);
-#endif
-
-void vwarn(const char *fmt, va_list list);
-void warn(const char *fmt, ...);
-void err(int eval, const char *fmt, ...);
-void vwarnx(const char *fmt, va_list list);
-void warnx(const char *fmt, ...);
-void errx(int eval, const char *fmt, ...);
-#endif
-
 int recent_seqno(int , int);
 
-#ifndef WINDOWS32
+/* Fill buf with len bytes of cryptographically-secure random data
+ * (getrandom/arc4random//dev/urandom/CryptoAPI; see common.c).
+ * Used for protocol-seed and nonce generation instead of rand(). */
+void secure_random(void *buf, size_t len);
+
 void fd_set_close_on_exec(int fd);
-#endif
 
 #endif

@@ -6,28 +6,74 @@ on:
   pull_request:
     branches: [ master ]
 
+permissions:
+    contents: read
+
 jobs:
   build:
-
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest]
+        selinux: [libselinux1-dev, ""]
+        systemd: [libsystemd-dev, ""]
+        capng: [libcap-ng-dev, ""]
+        include:
+          - runner: ubuntu-24.04-arm
+            selinux: libselinux1-dev
+            systemd: libsystemd-dev
+            capng: libcap-ng-dev
+    runs-on: ${{ matrix.runner }}
 
     steps:
-    - uses: actions/checkout@v2
-    - name: make
-      run: make
-    - name: install check
-      run: sudo apt install check
+    - uses: actions/checkout@v7
+    - name: apt update
+      run: sudo apt update
+    - name: install deps
+      run: >-
+        sudo apt install -y
+        meson ninja-build
+        check
+        ${{ matrix.selinux }}
+        ${{ matrix.systemd }}
+        ${{ matrix.capng }}
+    - name: meson setup
+      run: meson setup build
+    - name: build
+      working-directory: build
+      run: ninja
     - name: run tests
-      run: make test
+      working-directory: build
+      run: ninja test
 
   build-android:
 
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
-    - uses: nttld/setup-ndk@v1
-      with:
-        ndk-version: r21e
-    - name: make
-      run: make cross-android
+    - uses: actions/checkout@v7
+    - name: apt update
+      run: sudo apt update
+    - name: install deps
+      run: sudo apt install meson ninja-build check
+    - name: meson setup
+      run: meson setup build-android --cross-file .github/ubuntu-android-aarch64.ini
+    - name: build
+      working-directory: build-android
+      run: ninja
+
+  build-windows:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+    - name: apt update
+      run: sudo apt update
+    - name: install deps
+      run: sudo apt install meson ninja-build mingw-w64 mingw-w64-tools libz-mingw-w64-dev
+    - name: meson setup
+      run: meson setup build-windows --cross-file .github/ubuntu-windows-x86_64.ini
+    - name: build
+      working-directory: build-windows
+      run: ninja

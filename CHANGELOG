@@ -1,11 +1,32 @@
 
 iodine - https://code.kryo.se/iodine
 
-***********************************
+************************************
 
 CHANGES:
 
-master:
+2026-10-25: 0.9.0 "20 years"
+	- Changed deprecated tzsetwall() to tzset() (only used by FreeBSD),
+	  patch by Pouria Mousavizadeh Tehrani.
+	- Now builds on macOS even without if_utun.h (pre 10.6).
+	- Nameservers from /etc/resolve.conf and similar can now be
+	  up to 256 characters long, up from 16.
+	- Answer NXDOMAIN for _.xxx.yyy.top.domain, which is sent by
+	  recursive nameservers trying to do QNAME minimization.
+	  This keeps the servers from waiting before sending the next query.
+	- Various security and robustness fixes (cryptographic random,
+	  pidfile writing, parsing fixes) contributed by auto-charlie.
+	- Build system changed to meson
+	- BSD server bugfix for EINVAL after sendto(), from Sergei Zhmylev.
+	- Updated network interface initialization for Unix to not
+	  need to call ifconfig or route binaries.
+	- Merged support for more detailed user capability checking on
+	  Linux with libcap-ng, by Oleksandr Natalenko. Fixes bug #80.
+	- Windows tun driver changed to wintun. <https://www.wintun.net/>
+	- Raw mode for macOS/BSD clients (bug #79) fixed, patch by Marco Visin.
+	- Fixed bounds checks in dns_decode for MX/SRV types, from Akhil Koul.
+
+2023-04-17: 0.8.0 "Burning Snowman"
 	- Mac OS X: Support native utun VPN devices. Patch by
 		Peter Sagerson, ported from OpenVPN by Catalin Patulea.
 	- Fix compilation failure on kFreeBSD and Hurd, by Gregor Herrmann
@@ -16,7 +37,7 @@ master:
 	- Add support for IPv6 in the server.
 	   Raw mode will be with same protocol as used for login.
 	   Traffic inside tunnel is still IPv4.
-	- Update android build to support 5.0 (Lollipop) and newer.
+	- Update android build to try to support 5.0 (Lollipop) and newer.
 	- Change external IP lookup to using myip.opendns.com via DNS.
 	- Add option to choose IPv4 listen address from external IP lookup.
 	- Add server support for handling multiple domains via wildcard.
@@ -129,7 +150,7 @@ master:
 	- Fixed bug #21, now only IP address part of each packet is checked.
 		Should remove the need for the -c option and also work with
 		bugfixed DNS servers worldwide.
-	- Added -D option on server to enable debugging. Debug level 1 now 
+	- Added -D option on server to enable debugging. Debug level 1 now
 		prints info about each RX/TX datagram.
 
 2007-11-30: 0.4.1 "Tea Online"
