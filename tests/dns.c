@@ -15,25 +15,32 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "config.h"
+
 #include <check.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <sys/types.h>
+#ifdef WINDOWS
+#include "windows_dns.h"
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <sys/stat.h>
 #include <arpa/nameser.h>
+#endif
+#include <sys/stat.h>
 #ifdef DARWIN
-#define BIND_8_COMPAT
 #include <arpa/nameser_compat.h>
 #endif
 
 #include "common.h"
+#include "compat.h"
 #include "dns.h"
 #include "encoding.h"
-#include "test.h"
+#include "read.h"
+#include "test_main.h"
 
 static void dump_packet(char *, size_t);
 
@@ -90,20 +97,19 @@ START_TEST(test_encode_query)
 	if (*d != '.') {
 		*d++ = '.';
 	}
-	strcpy(d, topdomain);
+	len = sizeof(resolv) - (d - resolv);
+	strlcpy(d, topdomain, len);
 	len = sizeof(buf);
 	ret = dns_encode(buf, len, &q, QR_QUERY, resolv, strlen(resolv));
 	len = sizeof(query_packet) - 1; /* Skip extra null character */
 
-	if (strncmp(query_packet, buf, sizeof(query_packet)) || ret != len) {
+	if (strncmp(query_packet, buf, sizeof(query_packet)) || ret != (int)len) {
 		printf("\n");
 		dump_packet(query_packet, len);
 		dump_packet(buf, ret);
 	}
-	ck_assert_msg(strncmp(query_packet, buf, sizeof(query_packet)) == 0,
-		"Did not compile expected packet");
-	ck_assert_msg(ret == len,
-		"Bad packet length: %d, expected %zu", ret, len);
+	ck_assert_mem_eq(query_packet, buf, sizeof(query_packet));
+	ck_assert_int_eq(ret, len);
 }
 END_TEST
 
@@ -126,11 +132,8 @@ START_TEST(test_decode_query)
 	len = sizeof(buf);
 	unpack_data(buf, len, &(q.name[1]), (int) (domain - q.name) - 1, enc);
 
-	ck_assert_msg(strncmp(buf, innerData, strlen(innerData)) == 0,
-		"Did not extract expected host: '%s'", buf);
-	ck_assert_msg(strlen(buf) == strlen(innerData),
-		"Bad host length: %zu, expected %zu: '%s'",
-		strlen(buf), strlen(innerData), buf);
+	ck_assert_str_eq(buf, innerData);
+	ck_assert_int_eq(strlen(buf), strlen(innerData));
 }
 END_TEST
 
@@ -145,17 +148,15 @@ START_TEST(test_encode_response)
 	len = sizeof(buf);
 	memset(&buf, 0, sizeof(buf));
 	memset(&q, 0, sizeof(struct query));
-	strncpy(q.name, host, strlen(host));
+	strlcpy(q.name, host, QUERY_NAME_SIZE);
 	q.type = T_NULL;
 	q.id = 1337;
 
 	ret = dns_encode(buf, len, &q, QR_ANSWER, msgData, strlen(msgData));
 	len = sizeof(answer_packet) - 1; /* Skip extra null character */
 
-	ck_assert_msg(strncmp(answer_packet, buf, sizeof(answer_packet)) == 0,
-		"Did not compile expected packet");
-	ck_assert_msg(ret == len,
-		"Bad packet length: %d, expected %d", ret, len);
+	ck_assert_str_eq(answer_packet, buf);
+	ck_assert_int_eq(ret, len);
 }
 END_TEST
 
@@ -170,11 +171,9 @@ START_TEST(test_decode_response)
 	memset(&buf, 0, sizeof(buf));
 
 	ret = dns_decode(buf, len, &q, QR_ANSWER, answer_packet, sizeof(answer_packet)-1);
-	ck_assert_msg(ret == strlen(msgData),
-		"Bad data length: %d, expected %zu", ret, strlen(msgData));
-	ck_assert_msg(strncmp(msgData, buf, strlen(msgData)) == 0,
-		"Did not extract expected data");
-	ck_assert(q.id == 0x0539);
+	ck_assert_int_eq(ret, strlen(msgData));
+	ck_assert_str_eq(msgData, buf);
+	ck_assert_int_eq(q.id, 0x0539);
 }
 END_TEST
 
@@ -189,12 +188,83 @@ START_TEST(test_decode_response_with_high_trans_id)
 	memset(&buf, 0, sizeof(buf));
 
 	ret = dns_decode(buf, len, &q, QR_ANSWER, answer_packet_high_trans_id, sizeof(answer_packet_high_trans_id)-1);
-	ck_assert_msg(ret == strlen(msgData),
-		"Bad data length: %d, expected %zu", ret, strlen(msgData));
-	ck_assert_msg(strncmp(msgData, buf, strlen(msgData)) == 0,
-		"Did not extract expected data");
-	ck_assert_msg(q.id == 0x8539,
-		"q.id was %08X instead of %08X!", q.id, 0x8539);
+	ck_assert_int_eq(ret, strlen(msgData));
+	ck_assert_str_eq(msgData, buf);
+	ck_assert_int_eq(q.id, 0x8539);
+}
+END_TEST
+
+START_TEST(test_decode_response_overflow_rlen)
+{
+	/* A well-formed T_NULL answer (same header/question as
+	   answer_packet) whose answer advertises rlen=0xFFFF while only a
+	   few rdata bytes are actually present in the packet. */
+	char packet[] =
+		"\x05\x39\x84\x00\x00\x01\x00\x01\x00\x00\x00\x00\x05\x73\x69\x6C\x6C"
+		"\x79\x04\x68\x6F\x73\x74\x02\x6F\x66\x06\x69\x6F\x64\x69\x6E\x65\x04"
+		"\x63\x6F\x64\x65\x04\x6B\x72\x79\x6F\x02\x73\x65\x00\x00\x0A\x00\x01"
+		"\x01\x62\x00\x00\x0A\x00\x01\x00\x00\x00\x00\xFF\xFF\x78\x78\x78";
+	char buf[512];
+	struct query q;
+	int ret;
+
+	memset(&q, 0, sizeof(q));
+	memset(&buf, 0, sizeof(buf));
+	ret = dns_decode(buf, sizeof(buf), &q, QR_ANSWER,
+			   packet, sizeof(packet) - 1);
+	ck_assert_msg(ret == 0,
+			"Overlong advertised rlen (0xFFFF) was not rejected: rv=%d",
+			ret);
+}
+END_TEST
+
+START_TEST(test_decode_response_compressed_mx)
+{
+	char packet[4096];
+	char out[4096];
+	unsigned int answers;
+
+	for (answers = 1; answers < 20; answers++) {
+		char *p = packet;
+		struct query q;
+		unsigned int i;
+		int ret;
+
+		memset(packet, 0, sizeof(packet));
+		/* Response, one question, many MX answers. */
+		putshort(&p, 0x1234);
+		putshort(&p, 0x8000);
+		putshort(&p, 1);
+		putshort(&p, answers);
+		putshort(&p, 0);
+		putshort(&p, 0);
+
+		/* A 253-character presentation name (255 bytes on the wire). */
+		for (i = 0; i < 4; i++) {
+			int label_len = (i == 3) ? 61 : 63;
+			*p++ = (unsigned char)label_len;
+			memset(p, 'a' + i, (size_t)label_len);
+			p += label_len;
+		}
+		*p++ = 0;
+		putshort(&p, 15); /* MX */
+		putshort(&p, 1);  /* IN */
+
+		for (i = 0; i < answers; i++) {
+			/* Owner and exchange both compress to the question at offset 12. */
+			putshort(&p, 0xc00c);
+			putshort(&p, 15); /* MX */
+			putshort(&p, 1);  /* IN */
+			putlong(&p, 0);
+			putshort(&p, 4);
+			putshort(&p, (unsigned int)(10 * (i + 1)));
+			putshort(&p, 0xc00c);
+		}
+
+		ret = dns_decode(out, sizeof(out), &q, QR_ANSWER,
+				 packet, (size_t)(p - packet));
+		ck_assert_int_eq(ret, MIN(sizeof(packet) - 1, answers * 254));
+	}
 }
 END_TEST
 
@@ -208,7 +278,7 @@ START_TEST(test_get_id_short_packet)
 	memset(&buf, 5, sizeof(buf));
 
 	id = dns_get_id(buf, len);
-	ck_assert(id == 0);
+	ck_assert_int_eq(id, 0);
 }
 END_TEST
 
@@ -217,7 +287,7 @@ START_TEST(test_get_id_low)
 	unsigned short id;
 
 	id = dns_get_id(answer_packet, sizeof(answer_packet));
-	ck_assert(id == 1337);
+	ck_assert_int_eq(id, 1337);
 }
 END_TEST
 
@@ -226,14 +296,14 @@ START_TEST(test_get_id_high)
 	unsigned short id;
 
 	id = dns_get_id(answer_packet_high_trans_id, sizeof(answer_packet_high_trans_id));
-	ck_assert(id == 0x8539);
+	ck_assert_int_eq(id, 0x8539);
 }
 END_TEST
 
 static void
 dump_packet(char *buf, size_t len)
 {
-	int pos;
+	unsigned int pos;
 
 	for (pos = 0; pos < len; pos++) {
 		printf("\\x%02X", (unsigned char) buf[pos]);
@@ -250,7 +320,7 @@ dump_packet(char *buf, size_t len)
 }
 
 TCase *
-test_dns_create_tests()
+test_create(void)
 {
 	TCase *tc;
 
@@ -260,6 +330,8 @@ test_dns_create_tests()
 	tcase_add_test(tc, test_encode_response);
 	tcase_add_test(tc, test_decode_response);
 	tcase_add_test(tc, test_decode_response_with_high_trans_id);
+	tcase_add_test(tc, test_decode_response_overflow_rlen);
+	tcase_add_test(tc, test_decode_response_compressed_mx);
 	tcase_add_test(tc, test_get_id_short_packet);
 	tcase_add_test(tc, test_get_id_low);
 	tcase_add_test(tc, test_get_id_high);

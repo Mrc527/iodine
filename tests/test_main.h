@@ -15,25 +15,37 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef __TEST_H__
-#define __TEST_H__
+#include <check.h>
+#include <stdio.h>
+#include <stdarg.h>
+#include <stdlib.h>
+#include <string.h>
 
-TCase *test_base32_create_tests();
-TCase *test_base64_create_tests();
-TCase *test_common_create_tests();
-TCase *test_dns_create_tests();
-TCase *test_encoding_create_tests();
-TCase *test_read_create_tests();
-TCase *test_login_create_tests();
-TCase *test_user_create_tests();
-TCase *test_fw_query_create_tests();
+#ifndef __TEST_MAIN_H__
+#define __TEST_MAIN_H__
 
-char *va_str(const char *, ...);
+TCase *test_create(void);
 
-#if (CHECK_MAJOR_VERSION == 0 && \
-	((CHECK_MINOR_VERSION == 9 && CHECK_MICRO_VERSION < 2) || \
-	 (CHECK_MINOR_VERSION < 9)))
-#define tcase_set_timeout(...)
-#endif
+int
+main(void)
+{
+	SRunner *runner;
+	Suite *iodine;
+	TCase *test;
+	int failed;
+
+	iodine = suite_create(SUITE_NAME);
+
+	test = test_create();
+	suite_add_tcase(iodine, test);
+
+	runner = srunner_create(iodine);
+	srunner_run_all(runner, CK_NORMAL);
+	failed = srunner_ntests_failed(runner);
+
+	srunner_free(runner);
+
+	return (failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+}
 
 #endif

@@ -18,6 +18,9 @@
 #ifndef __CLIENT_H__
 #define __CLIENT_H__
 
+#include "config.h"
+#include "common.h"
+
 void client_init(void);
 void client_stop(void);
 

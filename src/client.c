@@ -29,15 +29,16 @@
 #include <zlib.h>
 #include <time.h>
 
-#ifdef WINDOWS32
-#include "windows.h"
+#include "config.h"
+
+#ifdef WINDOWS
+#include "windows_dns.h"
 #else
 #include <arpa/nameser.h>
 #ifdef ANDROID
 #include "android_dns.h"
 #endif
 #ifdef DARWIN
-#define BIND_8_COMPAT
 #include <arpa/nameser_compat.h>
 #endif
 #include <grp.h>
@@ -46,6 +47,7 @@
 #endif
 
 #include "common.h"
+#include "compat.h"
 #include "encoding.h"
 #include "dns.h"
 #include "login.h"
@@ -83,7 +85,7 @@ static uint16_t chunkid_prev2;
 
 /* The encoder used for data packets
  * Defaults to Base32, can be changed after handshake */
-const static struct encoder *dataenc = &base32_ops;
+static const struct encoder *dataenc = &base32_ops;
 
 /* The encoder to use for downstream data */
 static char downenc = ' ';
@@ -103,14 +105,21 @@ static long send_query_recvcnt = 0;
 static int hostname_maxlen = 0xFF;
 
 void
-client_init()
+client_init(void)
 {
+	unsigned int r;
+
 	running = 1;
-	rand_seed = ((unsigned int) rand()) & 0xFFFF;
-	send_ping_soon = 1;	/* send ping immediately after startup */
+	/* rand_seed/chunkid identify our outgoing DNS queries and are sent
+	   on the wire; seed them from a CSPRNG (they used to come from
+	   rand() after srand(time(NULL)), making them predictable). */
+	secure_random(&r, sizeof(r));
+	rand_seed = r & 0xFFFF;
+	send_ping_soon = 1;	/* send ping immediately at startup */
 	conn = CONN_DNS_NULL;
 
-	chunkid = ((unsigned int) rand()) & 0xFFFF;
+	secure_random(&r, sizeof(r));
+	chunkid = r & 0xFFFF;
 	chunkid_prev = 0;
 	chunkid_prev2 = 0;
 
@@ -124,13 +133,13 @@ client_init()
 }
 
 void
-client_stop()
+client_stop(void)
 {
 	running = 0;
 }
 
 enum connection
-client_get_conn()
+client_get_conn(void)
 {
 	return conn;
 }
@@ -175,7 +184,7 @@ client_set_qtype(char *qtype)
 }
 
 char *
-client_get_qtype()
+client_get_qtype(void)
 {
 	char *c = "UNDEFINED";
 
@@ -225,7 +234,7 @@ client_set_hostname_maxlen(int i)
 }
 
 const char *
-client_get_raw_addr()
+client_get_raw_addr(void)
 {
 	return format_addr(&raw_serv, raw_serv_len);
 }
@@ -292,7 +301,7 @@ send_query(int fd, char *hostname)
 }
 
 static void
-send_raw(int fd, char *buf, int buflen, int cmd)
+send_raw(int fd, char *buf, unsigned int buflen, int cmd)
 {
 	char packet[4096];
 	int len;
@@ -307,7 +316,7 @@ send_raw(int fd, char *buf, int buflen, int cmd)
 	len += RAW_HDR_LEN;
 	packet[RAW_HDR_CMD] = cmd | (userid & 0x0F);
 
-	sendto(fd, packet, len, 0, (struct sockaddr*)&raw_serv, sizeof(raw_serv));
+	sendto(fd, packet, len, 0, (struct sockaddr*)&raw_serv, raw_serv_len);
 }
 
 static void
@@ -339,8 +348,8 @@ static void
 send_chunk(int fd)
 {
 	char buf[4096];
-	int avail;
-	int code;
+	unsigned int avail;
+	unsigned int code;
 	char *p;
 	static int datacmc = 0;
 	char *datacmcchars = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -981,7 +990,7 @@ tunnel_dns(int tun_fd, int dns_fd)
 		}
 		inpkt.fragment = new_down_fragment;
 
-		datalen = MIN(read - 2, sizeof(inpkt.data) - inpkt.len);
+		datalen = MIN((unsigned int)(read - 2), sizeof(inpkt.data) - inpkt.len);
 
 		/* we are here only when read > 2, so datalen "always" >=1 */
 
@@ -1081,10 +1090,8 @@ client_tunnel(int tun_fd, int dns_fd)
 {
 	struct timeval tv;
 	fd_set fds;
-	int rv;
 	int i;
 
-	rv = 0;
 	lastdownstreamtime = time(NULL);
 	send_query_sendcnt = 0;  /* start counting now */
 
@@ -1172,7 +1179,7 @@ client_tunnel(int tun_fd, int dns_fd)
 		}
 	}
 
-	return rv;
+	return 0;
 }
 
 static void
@@ -1270,10 +1277,7 @@ send_handshake_query(int fd, char *prefix)
 	cmc_dot[4] = 0;
 	rand_seed++;
 
-	buf[0] = 0;
-	strncat(buf, prefix, 60); /* 63 - space for 3 CMC bytes */
-	strcat(buf, cmc_dot);
-	strncat(buf, topdomain, sizeof(buf) - strlen(buf) - 1);
+	snprintf(buf, sizeof(buf), "%.60s%s%s", prefix, cmc_dot, topdomain);
 	send_query(fd, buf);
 }
 
@@ -1405,8 +1409,19 @@ handshake_login(int dns_fd, int seed)
 
 				server[64] = 0;
 				client[64] = 0;
-				if (tun_setip(client, server, netmask) == 0 &&
-					tun_setmtu(mtu) == 0) {
+				/* The netmask prefix length comes from the server's reply.
+				   Validate it: tun_setip() computes the mask with
+				   "netmask <<= (32 - netbits)", which is undefined
+				   behavior for netbits < 1 or > 32 (an on-path
+				   attacker can supply the reply - see the lack of
+				   channel authentication). Reject like a malformed
+				   handshake and retry login. */
+				if (netmask < 1 || netmask > 32) {
+					fprintf(stderr,
+						"Received bad handshake (netmask %d)\n",
+						netmask);
+				} else if (tun_setip(client, server, netmask) == 0 &&
+					   tun_setmtu(mtu) == 0) {
 
 					fprintf(stderr, "Server tunnel IP is %s\n", server);
 					return 0;

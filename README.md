@@ -10,14 +10,17 @@ firewalled, but DNS queries are allowed.
 COMPILING
 ---------
 
-Iodine has no configure script. There are two optional features for Linux
-(SELinux and systemd support) that will be enabled automatically if the
-relevant header files are found in `/usr/include`.
-(See script at `./src/osflags`)
+To compile iodine you need meson.
+Run the following commands to compile inside the `build` directory:
 
-Run `make` to compile the server and client binaries.
-Run `make install` to copy binaries and manpage to the destination directory.
-Run `make test` to compile and run the unit tests. (Requires the `check` library)
+```
+meson setup build
+cd build
+ninja
+```
+
+To build and run the tests you need the `check` library. Start them by
+running `ninja test` inside the build directory.
 
 
 QUICKSTART
@@ -173,9 +176,9 @@ supported request types, for example:
 
 The reply should look like garbled text in all these cases.
 
-#### Mac OS X
-On Mac OS X 10.6 and later, iodine supports the native utun devices built into
-the OS - use `-d utunX`.
+#### macOS
+On macOS 10.6 and later, iodine supports the native utun devices built into
+the OS. They will tried automatically, use `-d utunX` to pick a specific device.
 
 
 Operational info
@@ -379,11 +382,13 @@ PORTABILITY
 -----------
 
 iodine has been tested on Linux (arm, ia64, x86, AMD64 and SPARC64), FreeBSD
-(ia64, x86), OpenBSD (x86), NetBSD (x86), MacOS X (ppc and x86, with
-<http://tuntaposx.sourceforge.net/>). and Windows (with OpenVPN TAP32 driver, see
-win32 readme file).  It should be easy to port to other unix-like systems that
-have TUN/TAP tunneling support. Let us know if you get it to run on other
-platforms.
+(ia64, x86), OpenBSD (x86), NetBSD (x86), macOS (arm64, ppc and x86, with
+utun or <https://tuntaposx.sourceforge.net/> for older versions), and Windows
+(with included wintun driver, see README-win32.txt). It runs on rooted Android
+devices (see details in README-android.txt). The build system supports cross
+compilation (examples at <https://github.com/yarrick/iodine/actions>).
+It should be easy to port to other unix-like systems that have TUN/TAP
+tunneling support. Let us know if you get it to run on other platforms.
 
 
 THE NAME

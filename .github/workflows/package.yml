@@ -14,11 +14,27 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: install deps
-      run: sudo apt install tofrodos gcc-mingw-w64 libz-mingw-w64-dev
-    - name: make
-      run: make iodine-latest-windows.zip
+      run: sudo apt update && sudo apt install -y meson ninja-build tofrodos mingw-w64 mingw-w64-tools libz-mingw-w64-dev
+    - name: build
+      run: |
+        meson setup build-windows --cross-file .github/ubuntu-windows-x86_64.ini
+        ninja -C build-windows
+    - name: package
+      run: |
+        mkdir -p iodine-latest-windows/64bit
+        echo "Create date: " > iodine-latest-windows/VERSION.txt
+        LANG=en_US date >> iodine-latest-windows/VERSION.txt
+        echo "Git version: " >> iodine-latest-windows/VERSION.txt
+        git rev-parse HEAD >> iodine-latest-windows/VERSION.txt
+        for i in README.md CHANGELOG; do cp $i iodine-latest-windows/$i.txt; done
+        todos iodine-latest-windows/*.txt
+        cp README-win32.txt iodine-latest-windows
+        cp build-windows/iodine.exe build-windows/iodined.exe build-windows/wintun.dll iodine-latest-windows/64bit
+        cp /usr/x86_64-w64-mingw32/lib/zlib1.dll iodine-latest-windows/64bit
+        x86_64-w64-mingw32-strip iodine-latest-windows/64bit/*.exe
+        zip -r iodine-latest-windows.zip iodine-latest-windows
     - name: 'Upload Artifact'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v7
       with:
         name: iodine-latest-windows.zip
         path: iodine-latest-windows.zip
@@ -30,17 +46,21 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
-    - name: make
-      run: make
-    - name: install check
-      run: brew install check
+    - name: install deps
+      run: brew install check meson
+    - name: build
+      run: |
+        meson setup build
+        ninja -C build
     - name: run tests
-      run: make test
+      run: meson test -C build
     - name: 'Upload Artifact'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v7
       with:
         name: iodine-latest-macos-amd64
-        path: bin/*
+        path: |
+          build/iodine
+          build/iodined
         retention-days: 5
 
   build-linux:
@@ -49,13 +69,19 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
-    - name: make
-      run: make
+    - name: install deps
+      run: sudo apt update && sudo apt install -y meson ninja-build
+    - name: build
+      run: |
+        meson setup build
+        ninja -C build
     - name: 'Upload Artifact'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v7
       with:
         name: iodine-latest-linux-amd64
-        path: bin/*
+        path: |
+          build/iodine
+          build/iodined
         retention-days: 5
 
 
@@ -65,7 +91,7 @@ jobs:
 
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v8
       - name: Get tag
         id: tag
         uses: dawidd6/action-get-tag@v1
