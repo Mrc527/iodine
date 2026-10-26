@@ -34,7 +34,7 @@ jobs:
         x86_64-w64-mingw32-strip iodine-latest-windows/64bit/*.exe
         zip -r iodine-latest-windows.zip iodine-latest-windows
     - name: 'Upload Artifact'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v7
       with:
         name: iodine-latest-windows.zip
         path: iodine-latest-windows.zip
@@ -55,7 +55,7 @@ jobs:
     - name: run tests
       run: meson test -C build
     - name: 'Upload Artifact'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v7
       with:
         name: iodine-latest-macos-amd64
         path: |
@@ -76,7 +76,7 @@ jobs:
         meson setup build
         ninja -C build
     - name: 'Upload Artifact'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v7
       with:
         name: iodine-latest-linux-amd64
         path: |
@@ -91,7 +91,7 @@ jobs:
 
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v8
       - name: Get tag
         id: tag
         uses: dawidd6/action-get-tag@v1
