@@ -17,7 +17,7 @@ jobs:
       run: sudo apt update && sudo apt install -y meson ninja-build tofrodos mingw-w64 mingw-w64-tools libz-mingw-w64-dev
     - name: build
       run: |
-        meson setup build-windows --cross-file .github/ubuntu-windows-x86_64.ini
+        meson setup build-windows --cross-file .github/mingw-windows-x86_64.ini
         ninja -C build-windows
     - name: package
       run: |
@@ -28,9 +28,8 @@ jobs:
         git rev-parse HEAD >> iodine-latest-windows/VERSION.txt
         for i in README.md CHANGELOG; do cp $i iodine-latest-windows/$i.txt; done
         todos iodine-latest-windows/*.txt
-        cp README-win32.txt iodine-latest-windows
-        cp build-windows/iodine.exe build-windows/iodined.exe build-windows/wintun.dll iodine-latest-windows/64bit
-        cp /usr/x86_64-w64-mingw32/lib/zlib1.dll iodine-latest-windows/64bit
+        cp README-windows.txt iodine-latest-windows
+        cp build-windows/iodine.exe build-windows/iodined.exe build-windows/wintun.dll build-windows/zlib1.dll iodine-latest-windows/64bit
         x86_64-w64-mingw32-strip iodine-latest-windows/64bit/*.exe
         zip -r iodine-latest-windows.zip iodine-latest-windows
     - name: 'Upload Artifact'
