@@ -18,8 +18,8 @@
 #include <check.h>
 #include <string.h>
 
-#include "test.h"
 #include "login.h"
+#include "test_main.h"
 
 START_TEST(test_login_hash)
 {
@@ -34,7 +34,7 @@ START_TEST(test_login_hash)
 
 	memset(ans, 0, sizeof(ans));
 	login_calculate(ans, len, pass, seed);
-	ck_assert(strncmp(ans, good, len) == 0);
+	ck_assert_mem_eq(ans, good, len);
 }
 END_TEST
 
@@ -54,12 +54,12 @@ START_TEST(test_login_hash_short)
 
 	/* If len < 16, it should do nothing */
 	login_calculate(ans, len, pass, seed);
-	ck_assert(memcmp(ans, check, sizeof(ans)) == 0);
+	ck_assert_mem_eq(ans, check, len);
 }
 END_TEST
 
 TCase *
-test_login_create_tests()
+test_create(void)
 {
 	TCase *tc;
 

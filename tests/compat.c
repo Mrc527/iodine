@@ -15,25 +15,30 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef __TEST_H__
-#define __TEST_H__
+#include <check.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
 
-TCase *test_base32_create_tests();
-TCase *test_base64_create_tests();
-TCase *test_common_create_tests();
-TCase *test_dns_create_tests();
-TCase *test_encoding_create_tests();
-TCase *test_read_create_tests();
-TCase *test_login_create_tests();
-TCase *test_user_create_tests();
-TCase *test_fw_query_create_tests();
+#include "config.h"
+#include "compat.h"
+#include "test_main.h"
 
-char *va_str(const char *, ...);
+START_TEST(test_progname)
+{
+	char *refname = "test_compat" PROGNAME_SUFFIX;
+	ck_assert_str_eq(__progname, refname);
+}
+END_TEST
 
-#if (CHECK_MAJOR_VERSION == 0 && \
-	((CHECK_MINOR_VERSION == 9 && CHECK_MICRO_VERSION < 2) || \
-	 (CHECK_MINOR_VERSION < 9)))
-#define tcase_set_timeout(...)
-#endif
+TCase *
+test_create(void)
+{
+	TCase *tc;
 
-#endif
+	tc = tcase_create("Compat");
+	tcase_add_test(tc, test_progname);
+
+	return tc;
+}

@@ -22,7 +22,7 @@
 #include <errno.h>
 
 #include "encoding.h"
-#include "test.h"
+#include "test_main.h"
 
 #define TUPLES 5
 
@@ -73,7 +73,7 @@ START_TEST(test_base64_encode)
 	len = sizeof(buf);
 	val = base64_ops.encode(buf, &len, testpairs[_i].a, strlen(testpairs[_i].a));
 
-	ck_assert(val == strlen(testpairs[_i].b));
+	ck_assert_int_eq(val, strlen(testpairs[_i].b));
 	ck_assert_str_eq(buf, testpairs[_i].b);
 }
 END_TEST
@@ -87,7 +87,7 @@ START_TEST(test_base64_decode)
 	len = sizeof(buf);
 	val = base64_ops.decode(buf, &len, testpairs[_i].b, strlen(testpairs[_i].b));
 
-	ck_assert(val == strlen(testpairs[_i].a));
+	ck_assert_int_eq(val, strlen(testpairs[_i].a));
 	ck_assert_str_eq(buf, testpairs[_i].a);
 }
 END_TEST
@@ -98,7 +98,7 @@ START_TEST(test_base64_blksize)
 	size_t enclen;
 	char *rawbuf;
 	char *encbuf;
-	int i;
+	unsigned int i;
 	int val;
 
 	rawlen = base64_ops.blocksize_raw;
@@ -114,25 +114,27 @@ START_TEST(test_base64_blksize)
 
 	val = base64_ops.encode(encbuf, &enclen, rawbuf, rawlen);
 
-	ck_assert_msg(rawlen == 3, "raw length was %zu not 3", rawlen);
-	ck_assert_msg(enclen == 3, "encoded %zu bytes, not 3", enclen);
-	ck_assert_msg(val == 4, "encoded string %s was length %d", encbuf, val);
+	ck_assert_int_eq(rawlen, 3);
+	ck_assert_int_eq(enclen, 3);
+	ck_assert_int_eq(val, 4);
 
 	memset(rawbuf, 0, rawlen + 16);
 
 	enclen = val;
 	val = base64_ops.decode(rawbuf, &rawlen, encbuf, enclen);
 
-	ck_assert_msg(rawlen == 3, "raw length was %zu not 3", rawlen);
-	ck_assert(val == 3);
+	ck_assert_int_eq(rawlen, 3);
+	ck_assert_int_eq(val, 3);
 	for (i = 0; i < rawlen; i++) {
-		ck_assert(rawbuf[i] == 'A');
+		ck_assert_int_eq(rawbuf[i], 'A');
 	}
+	free(rawbuf);
+	free(encbuf);
 }
 END_TEST
 
 TCase *
-test_base64_create_tests()
+test_create(void)
 {
 	TCase *tc;
 

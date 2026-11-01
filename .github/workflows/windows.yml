@@ -6,26 +6,86 @@ on:
   pull_request:
     branches: [ master ]
 
+permissions:
+    contents: read
+
 jobs:
   build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: build UCRT64
+            runner: windows-latest
+            msystem: UCRT64
+            pkg_prefix: mingw-w64-ucrt-x86_64
+            bench: true
 
-    runs-on: windows-latest
+          - name: build CLANG64
+            runner: windows-latest
+            msystem: CLANG64
+            pkg_prefix: mingw-w64-clang-x86_64
+            bench: false
+
+          - name: build CLANGARM64
+            runner: windows-11-arm
+            msystem: CLANGARM64
+            pkg_prefix: mingw-w64-clang-aarch64
+            bench: true
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
     defaults:
       run:
         shell: msys2 {0}
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v7
     - uses: msys2/setup-msys2@v2
       with:
-        msystem: MINGW64
+        msystem: ${{ matrix.msystem }}
         update: false
-        install: git make mingw-w64-x86_64-toolchain mingw-w64-x86_64-zlib
-    - name: make
-      run: make TARGETOS=windows32
-    - name: 'Upload Artifact'
-      uses: actions/upload-artifact@v3
+        install: >-
+          git
+          ${{ matrix.pkg_prefix }}-toolchain
+          ${{ matrix.pkg_prefix }}-zlib
+          ${{ matrix.pkg_prefix }}-meson
+          ${{ matrix.pkg_prefix }}-check
+          ${{ matrix.pkg_prefix }}-python-pip
+    - name: meson setup
+      run: meson setup build
+    - name: build
+      working-directory: build
+      run: ninja
+    - name: run tests
+      working-directory: build
+      run: ninja test
+    - name: install ping3
+      if: matrix.bench
+      run: python3 -m pip install ping3
+    - name: run bench
+      if: matrix.bench
+      working-directory: build
+      run: ninja tun_bench
+
+  build-android:
+
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
       with:
-        name: bin
-        path: bin
-        retention-days: 5
+        python-version: "3.x"
+    - name: install meson
+      shell: pwsh
+      run: |
+        pip install -q meson ninja
+        refreshenv
+    - name: meson setup
+      shell: pwsh
+      run: meson setup build-android --cross-file .github\windows-android-aarch64.ini
+    - name: build
+      shell: pwsh
+      working-directory: build-android
+      run: ninja

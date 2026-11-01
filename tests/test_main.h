@@ -21,43 +21,26 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "test.h"
+#include "compat.h"
+
+#ifndef __TEST_MAIN_H__
+#define __TEST_MAIN_H__
+
+TCase *test_create(void);
 
 int
-main()
+main(int argc, char **argv)
 {
 	SRunner *runner;
 	Suite *iodine;
 	TCase *test;
 	int failed;
 
-	iodine = suite_create("iodine");
+	(void)argc;
+	progname_init(argv[0]);
+	iodine = suite_create(SUITE_NAME);
 
-	test = test_base32_create_tests();
-	suite_add_tcase(iodine, test);
-
-	test = test_base64_create_tests();
-	suite_add_tcase(iodine, test);
-
-	test = test_common_create_tests();
-	suite_add_tcase(iodine, test);
-
-	test = test_dns_create_tests();
-	suite_add_tcase(iodine, test);
-
-	test = test_encoding_create_tests();
-	suite_add_tcase(iodine, test);
-
- 	test = test_read_create_tests();
-	suite_add_tcase(iodine, test);
-
- 	test = test_login_create_tests();
-	suite_add_tcase(iodine, test);
-
- 	test = test_user_create_tests();
-	suite_add_tcase(iodine, test);
-
- 	test = test_fw_query_create_tests();
+	test = test_create();
 	suite_add_tcase(iodine, test);
 
 	runner = srunner_create(iodine);
@@ -68,3 +51,5 @@ main()
 
 	return (failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
+
+#endif

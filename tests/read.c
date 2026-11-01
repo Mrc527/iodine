@@ -15,13 +15,18 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "config.h"
+
 #include <sys/types.h>
+#ifdef WINDOWS
+#include "windows_dns.h"
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <sys/stat.h>
 #include <arpa/nameser.h>
+#endif
+#include <sys/stat.h>
 #ifdef DARWIN
-#define BIND_8_COMPAT
 #include <arpa/nameser_compat.h>
 #endif
 #include <stdio.h>
@@ -34,7 +39,7 @@
 #include "encoding.h"
 #include "dns.h"
 #include "read.h"
-#include "test.h"
+#include "test_main.h"
 
 START_TEST(test_read_putshort)
 {
@@ -46,15 +51,11 @@ START_TEST(test_read_putshort)
 	for (i = 0; i < 65536; i++) {
 		p = (char*)&k;
 		putshort(&p, i);
-		ck_assert_msg(ntohs(k) == i,
-				"Bad value on putshort for %d: %d != %d",
-					i, ntohs(k), i);
+		ck_assert_int_eq(ntohs(k), i);
 
 		p = (char*)&k;
 		readshort(NULL, &p, &l);
-		ck_assert_msg(l == i,
-				"Bad value on readshort for %d: %d != %d",
-					i, l, i);
+		ck_assert_int_eq(l, i);
 	}
 }
 END_TEST
@@ -64,23 +65,18 @@ START_TEST(test_read_putlong)
 	uint32_t k;
 	uint32_t l;
 	char* p;
-	int i;
-	int j;
+	unsigned int i;
+	unsigned int j;
 
 	for (i = 0; i < 32; i++) {
 		p = (char*)&k;
-		j = 0xf << i;
-
+		j = 0xfLL << i;
 		putlong(&p, j);
-
-		ck_assert_msg(ntohl(k) == j,
-				"Bad value on putlong for %d: %d != %d", i, ntohl(j), j);
+		ck_assert_int_eq(ntohl(k), j);
 
 		p = (char*)&k;
 		readlong(NULL, &p, &l);
-
-		ck_assert_msg(l == j,
-				"Bad value on readlong for %d: %d != %d", i, l, j);
+		ck_assert_int_eq(l, j);
 	}
 }
 END_TEST
@@ -98,8 +94,8 @@ START_TEST(test_read_name_empty_loop)
 	data = (char*) emptyloop + sizeof(HEADER);
 	buf[1023] = 'A';
 	rv = readname((char *) emptyloop, sizeof(emptyloop), &data, buf, 1023);
-	ck_assert(rv == 0);
-	ck_assert(buf[1023] == 'A');
+	ck_assert_int_eq(rv, 0);
+	ck_assert_int_eq(buf[1023], 'A');
 }
 END_TEST
 
@@ -116,8 +112,8 @@ START_TEST(test_read_name_inf_loop)
 	data = (char*) infloop + sizeof(HEADER);
 	buf[4] = '\a';
 	rv = readname((char*) infloop, sizeof(infloop), &data, buf, 4);
-	ck_assert(rv == 3);
-	ck_assert(buf[4] == '\a');
+	ck_assert_int_eq(rv, 3);
+	ck_assert_int_eq(buf[4], '\a');
 }
 END_TEST
 
@@ -140,8 +136,8 @@ START_TEST(test_read_name_longname)
 	data = (char*) longname + sizeof(HEADER);
 	buf[256] = '\a';
 	rv = readname((char*) longname, sizeof(longname), &data, buf, 256);
-	ck_assert(rv == 256);
-	ck_assert(buf[256] == '\a');
+	ck_assert_int_eq(rv, 256);
+	ck_assert_int_eq(buf[256], '\a');
 }
 END_TEST
 
@@ -157,7 +153,27 @@ START_TEST(test_read_name_onejump)
 	memset(buf, 0, sizeof(buf));
 	data = (char*) onejump + sizeof(HEADER);
 	rv = readname((char*) onejump, sizeof(onejump), &data, buf, 256);
-	ck_assert(rv == 9);
+	ck_assert_int_eq(rv, 9);
+	ck_assert_str_eq(buf, "hh.zBCDE");
+}
+END_TEST
+
+START_TEST(test_read_name_endjump)
+{
+	/* Declare as array to not get zero-terminating byte added */
+	unsigned char onejump[] = {
+		'A', 'A', 0x81, 0x0, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x02, 'h', 'h', 0x05, 'z', 'B', 'C', 'D', 'E', 0x00, 0xc0, 0x0c
+	};
+	char buf[1024];
+	char *data;
+	int rv;
+
+	memset(buf, 0, sizeof(buf));
+	data = (char*) onejump + sizeof(HEADER) + 10;
+	rv = readname((char*) onejump, sizeof(onejump), &data, buf, 256);
+	ck_assert_int_eq(rv, 9);
+	ck_assert_str_eq(buf, "hh.zBCDE");
 }
 END_TEST
 
@@ -179,8 +195,8 @@ START_TEST(test_read_name_badjump_start)
 		data = (char*) jumper + sizeof(HEADER);
 		rv = readname((char*) jumper, sizeof(badjump), &data, buf, 256);
 
-		ck_assert(rv == 0);
-		ck_assert(buf[0] == 0);
+		ck_assert_int_eq(rv, 0);
+		ck_assert_int_eq(buf[0], 0);
 	}
 	free(jumper);
 }
@@ -204,10 +220,87 @@ START_TEST(test_read_name_badjump_second)
 		data = (char*) jumper + sizeof(HEADER);
 		rv = readname((char*) jumper, sizeof(badjump2), &data, buf, 256);
 
-		ck_assert(rv == 4);
+		ck_assert_int_eq(rv, 4);
 		ck_assert_str_eq("BA.", buf);
 	}
 	free(jumper);
+}
+END_TEST
+
+START_TEST(test_read_name_truncated_label)
+{
+	/* Label length byte claims 18 bytes but the packet ends after the
+	   first data byte. */
+	unsigned char p[] = {
+		'A', 'A', 0x81, 0x80, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x12, 'a' };
+	char *pm;
+	char buf[256];
+	char *data;
+	int rv;
+
+	pm = malloc(sizeof(p) + 8);
+	if (pm) {
+		memset(buf, 0, sizeof(buf));
+		memset(pm, 0, sizeof(p) + 8);
+		memcpy(pm, p, sizeof(p));
+		data = (char *) pm + sizeof(HEADER);
+		rv = readname((char *) pm, sizeof(p), &data, buf, 256);
+		ck_assert_int_gt(rv, 0);
+		ck_assert_msg(buf[255] == 0, "readname ran past its bounds");
+		ck_assert_str_eq("a", buf);
+		free(pm);
+	}
+}
+END_TEST
+
+START_TEST(test_read_name_ptr_at_packet_end)
+{
+	/* Compression pointer as the very last byte of the packet (no low
+	   byte present). */
+	unsigned char p[] = {
+		'A', 'A', 0x81, 0x80, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xc0 };
+	char *pm = malloc(sizeof(p) + 8);
+	char buf[256];
+	char *data;
+	int rv;
+
+	if (pm) {
+		memset(buf, 0, sizeof(buf));
+		memset(pm, 0, sizeof(p) + 8);
+		memcpy(pm, p, sizeof(p));
+		data = (char *) pm + sizeof(HEADER);
+		rv = readname((char *) pm, sizeof(p), &data, buf, 256);
+		ck_assert_int_eq(rv, 1);
+		ck_assert_str_eq("", buf);
+		free(pm);
+	}
+}
+END_TEST
+
+START_TEST(test_read_name_ptr_out_of_range)
+{
+	/* Compression pointer with both bytes present but an offset far
+	   outside the packet. Rejected as a bad jump (rv == 0). */
+	unsigned char p[] = {
+		'A', 'A', 0x81, 0x80, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xc0, 0x0e }; /* both pointer bytes present, offset (0x0E0E) is out of range */
+	char *pm = malloc(sizeof(p) + 8);
+	char buf[256];
+	char *data;
+	int rv;
+
+	if (pm) {
+		memset(buf, 0, sizeof(buf));
+		memset(pm, 0, sizeof(p) + 8);
+		memcpy(pm, p, sizeof(p));
+		data = (char *) pm + sizeof(HEADER);
+		rv = readname((char *) pm, sizeof(p), &data, buf, 256);
+		ck_assert_int_eq(rv, 0);
+		ck_assert_str_eq("", buf);
+		free(pm);
+	}
 }
 END_TEST
 
@@ -223,8 +316,8 @@ START_TEST(test_putname)
 	b = buf;
 	ret = putname(&b, 256, domain);
 
-	ck_assert(ret == strlen(domain) + 1);
-	ck_assert_msg(strncmp(buf, out, ret) == 0, "Happy flow failed");
+	ck_assert_int_eq(ret, strlen(domain) + 1);
+	ck_assert_str_eq(buf, out);
 }
 END_TEST
 
@@ -241,8 +334,8 @@ START_TEST(test_putname_nodot)
 	b = buf;
 	ret = putname(&b, 256, nodot);
 
-	ck_assert(ret == -1);
-	ck_assert(b == buf);
+	ck_assert_int_eq(ret, -1);
+	ck_assert_ptr_eq(b, buf);
 }
 END_TEST
 
@@ -263,27 +356,30 @@ START_TEST(test_putname_toolong)
 	b = buf;
 	ret = putname(&b, 256, toolong);
 
-	ck_assert(ret == -1);
-	ck_assert(b == buf);
+	ck_assert_int_eq(ret, -1);
+	ck_assert_ptr_eq(b, buf);
 }
 END_TEST
 
 
 TCase *
-test_read_create_tests()
+test_create(void)
 {
 	TCase *tc;
 
 	tc = tcase_create("Read");
-	tcase_set_timeout(tc, 60);
 	tcase_add_test(tc, test_read_putshort);
 	tcase_add_test(tc, test_read_putlong);
 	tcase_add_test(tc, test_read_name_empty_loop);
 	tcase_add_test(tc, test_read_name_inf_loop);
 	tcase_add_test(tc, test_read_name_longname);
 	tcase_add_test(tc, test_read_name_onejump);
+	tcase_add_test(tc, test_read_name_endjump);
 	tcase_add_test(tc, test_read_name_badjump_start);
 	tcase_add_test(tc, test_read_name_badjump_second);
+	tcase_add_test(tc, test_read_name_truncated_label);
+	tcase_add_test(tc, test_read_name_ptr_at_packet_end);
+	tcase_add_test(tc, test_read_name_ptr_out_of_range);
 	tcase_add_test(tc, test_putname);
 	tcase_add_test(tc, test_putname_nodot);
 	tcase_add_test(tc, test_putname_toolong);

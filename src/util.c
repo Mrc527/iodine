@@ -16,15 +16,18 @@
  */
 
 #include <stdio.h>
+#include "config.h"
 #include "common.h"
+#include "compat.h"
+#include "ui.h"
 #include "util.h"
 
 char *get_resolvconf_addr(void)
 {
-	static char addr[16];
+	static char addr[257];
 	char *rv = NULL;
-#ifndef WINDOWS32
-	char buf[80];
+#ifndef WINDOWS
+	char buf[257];
 	FILE *fp;
 #ifdef ANDROID
 	fp = popen("getprop net.dns1", "r");
@@ -32,7 +35,7 @@ char *get_resolvconf_addr(void)
 		err(1, "getprop net.dns1 failed");
 	if (fgets(buf, sizeof(buf), fp) == NULL)
 		err(1, "read getprop net.dns1 failed");
-	if (sscanf(buf, "%15s", addr) == 1)
+	if (sscanf(buf, "%256s", addr) == 1)
 		rv = addr;
 	pclose(fp);
 #else
@@ -42,7 +45,7 @@ char *get_resolvconf_addr(void)
 	while (feof(fp) == 0) {
 		fgets(buf, sizeof(buf), fp);
 
-		if (sscanf(buf, "nameserver %15s", addr) == 1) {
+		if (sscanf(buf, "nameserver %256s", addr) == 1) {
 			rv = addr;
 			break;
 		}
@@ -50,7 +53,7 @@ char *get_resolvconf_addr(void)
 
 	fclose(fp);
 #endif
-#else /* !WINDOWS32 */
+#else /* !WINDOWS */
 	FIXED_INFO  *fixed_info;
 	ULONG       buflen;
 	DWORD       ret;
@@ -66,8 +69,7 @@ char *get_resolvconf_addr(void)
 
 	ret = GetNetworkParams(fixed_info, &buflen);
 	if (ret == NO_ERROR) {
-		strncpy(addr, fixed_info->DnsServerList.IpAddress.String, sizeof(addr));
-		addr[15] = 0;
+		strlcpy(addr, fixed_info->DnsServerList.IpAddress.String, sizeof(addr));
 		rv = addr;
 	}
 	free(fixed_info);
@@ -75,15 +77,15 @@ char *get_resolvconf_addr(void)
 	return rv;
 }
 
-#ifdef OPENBSD
 void
 socket_setrtable(int fd, int rtable)
 {
+	(void)fd;
+	(void)rtable;
 #ifdef SO_RTABLE
 	if (setsockopt (fd, IPPROTO_IP, SO_RTABLE, &rtable, sizeof(rtable)) == -1)
 		err(1, "Failed to set routing table %d", rtable);
 #else
-	fprintf(stderr, "Routing domain support was not available at compile time.\n");
+	ui_log("Routing domain support was not available at compile time.\n");
 #endif
 }
-#endif

@@ -1,14 +1,16 @@
-FROM gcc AS builder
+FROM debian:13 AS builder
 
-RUN apt update && apt install -y check
+RUN apt update && apt install -y build-essential git pkg-config meson ninja-build check zlib1g-dev
+WORKDIR /src
 COPY . .
-RUN make
-RUN make tests
+RUN meson setup build
+RUN ninja -C build
+RUN meson test -C build
 
-FROM debian:11
+FROM debian:13
 
 WORKDIR /
-COPY --from=builder bin/* ./bin/
+COPY --from=builder /src/build/iodine /src/build/iodined /usr/local/sbin/
 
 RUN apt update && apt install -y net-tools squid
 COPY tools/squid.conf /etc/squid/
