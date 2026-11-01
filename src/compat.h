@@ -29,11 +29,10 @@
 #include <arpa/inet.h>
 #endif
 
-void network_init(void);
+extern char *__progname;
 
-#if !HAVE_INET_ATON
-int inet_aton(const char *cp, struct in_addr *inp);
-#endif
+void progname_init(char *);
+void network_init(void);
 
 #if !HAVE_WARNX
 void vwarn(const char *fmt, va_list list);

@@ -19,11 +19,9 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/stat.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <unistd.h>
 #include <string.h>
 #include <ctype.h>
@@ -38,7 +36,6 @@
 
 #ifdef WINDOWS
 #include <winsock2.h>
-#include <conio.h>
 #include <windows.h>
 #include <wincrypt.h>
 #else
@@ -46,7 +43,6 @@
 #ifdef DARWIN
 #include <arpa/nameser_compat.h>
 #endif
-#include <termios.h>
 #include <err.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -54,96 +50,22 @@
 #include <netdb.h>
 #endif
 
-#if HAVE_LIBCAPNG
-#include <cap-ng.h>
-#endif
-
 #include "common.h"
 #include "compat.h"
+#include "ui.h"
 
 /* The raw header used when not using DNS protocol */
 const unsigned char raw_header[RAW_HDR_LEN] = { 0x10, 0xd1, 0x9e, 0x00 };
 
-#if HAVE_CHECKTOKENMEMBERSHIP
-bool is_user_in(WELL_KNOWN_SID_TYPE sid_type) {
-	BOOL is_member = FALSE;
-	byte sid_buffer[SECURITY_MAX_SID_SIZE];
-	PSID sid = (PSID)sid_buffer;
-	DWORD sid_size = sizeof(sid_buffer);
-
-	if (CreateWellKnownSid(sid_type, NULL, sid, &sid_size)) {
-		CheckTokenMembership(NULL, sid, &is_member);
-	}
-
-	return is_member;
-}
-#endif
-
-void
-check_privileges(char *username, int port)
+char *
+format_inaddr(struct in_addr *addr)
 {
-	(void)username;
-	(void)port;
-#if HAVE_LIBCAPNG
-	bool capable = true;
-
-	if (capng_get_caps_process() == -1) {
-		warnx("Unable to get capabilities");
-		exit(-1);
+	static char dst[INET_ADDRSTRLEN + 1];
+	memset(dst, 0, sizeof(dst));
+	if (inet_ntop(AF_INET, addr, dst, sizeof(dst)) == NULL) {
+		dst[0] = '?';
 	}
-
-	if (!capng_have_capability(CAPNG_EFFECTIVE, CAP_NET_ADMIN)) {
-		warnx("capabilities: CAP_NET_ADMIN required");
-		capable = false;
-	}
-
-	if (port) {
-		unsigned short int ip_unprivileged_port_start = 1024;
-
-		FILE *file = fopen("/proc/sys/net/ipv4/ip_unprivileged_port_start", "r");
-		if (!file) {
-			warnx("sysctl: unable to get ip_unprivileged_port_start value");
-			/* do not bail out here in case systemd.service has ProcSubset=pid set */
-		} else {
-			fscanf(file, "%hu", &ip_unprivileged_port_start);
-			fclose(file);
-		}
-
-		if (port < ip_unprivileged_port_start &&
-			!capng_have_capability(CAPNG_EFFECTIVE, CAP_NET_BIND_SERVICE)) {
-			warnx("capabilities: CAP_NET_BIND_SERVICE required");
-			capable = false;
-		}
-	}
-
-	if (username) {
-		if (!capng_have_capability(CAPNG_EFFECTIVE, CAP_SETUID)) {
-			warnx("capabilities: CAP_SETUID required");
-			capable = false;
-		}
-		if (!capng_have_capability(CAPNG_EFFECTIVE, CAP_SETGID)) {
-			warnx("capabilities: CAP_SETGID required");
-			capable = false;
-		}
-	}
-
-	if (!capable) {
-		exit(-1);
-	}
-#elif HAVE_GETEUID
-	if (geteuid() != 0) {
-		warnx("Run as root and you'll be happy.");
-		exit(-1);
-	}
-#elif HAVE_CHECKTOKENMEMBERSHIP
-	if (!is_user_in(WinBuiltinAdministratorsSid) &&
-	    !is_user_in(WinBuiltinNetworkConfigurationOperatorsSid)) {
-		warnx("Missing admin or network config operator permissions.");
-		exit(-1);
-	}
-#else
-	/* No user permission check supported */
-#endif
+	return dst;
 }
 
 char *
@@ -152,17 +74,21 @@ format_addr(struct sockaddr_storage *sockaddr, socklen_t sockaddr_len)
 	static char dst[INET6_ADDRSTRLEN + 1];
 
 	memset(dst, 0, sizeof(dst));
-	if (sockaddr->ss_family == AF_INET && sockaddr_len >= sizeof(struct sockaddr_in)) {
-		getnameinfo((struct sockaddr *)sockaddr, sockaddr_len, dst, sizeof(dst) - 1, NULL, 0, NI_NUMERICHOST);
-	} else if (sockaddr->ss_family == AF_INET6 && sockaddr_len >= sizeof(struct sockaddr_in6)) {
+	if (sockaddr->ss_family == AF_INET &&
+	    (size_t) sockaddr_len >= sizeof(struct sockaddr_in)) {
+		getnameinfo((struct sockaddr *)sockaddr, sockaddr_len,
+			    dst, sizeof(dst) - 1, NULL, 0, NI_NUMERICHOST);
+	} else if (sockaddr->ss_family == AF_INET6 &&
+		   (size_t) sockaddr_len >= sizeof(struct sockaddr_in6)) {
 		struct sockaddr_in6 *addr = (struct sockaddr_in6 *) sockaddr;
 		if (IN6_IS_ADDR_V4MAPPED(&addr->sin6_addr)) {
 			struct in_addr ia;
 			/* Get mapped v4 addr from last 32bit field */
 			memcpy(&ia.s_addr, &addr->sin6_addr.s6_addr[12], sizeof(ia));
-			strlcpy(dst, inet_ntoa(ia), sizeof(dst));
+			return format_inaddr(&ia);
 		} else {
-			getnameinfo((struct sockaddr *)sockaddr, sockaddr_len, dst, sizeof(dst) - 1, NULL, 0, NI_NUMERICHOST);
+			getnameinfo((struct sockaddr *)sockaddr, sockaddr_len,
+				    dst, sizeof(dst) - 1, NULL, 0, NI_NUMERICHOST);
 		}
 	} else {
 		dst[0] = '?';
@@ -171,19 +97,24 @@ format_addr(struct sockaddr_storage *sockaddr, socklen_t sockaddr_len)
 }
 
 int
-get_addr(char *host, int port, int addr_family, int flags, struct sockaddr_storage *out, socklen_t *outlen)
+get_addr(char *host, int port, int addr_family, int flags,
+	 struct sockaddr_storage *out, socklen_t *outlen)
 {
 	struct addrinfo hints, *addr;
 	int res;
 	char portnum[8];
+
+	if (out == NULL) {
+		return -1;
+	}
 
 	memset(portnum, 0, sizeof(portnum));
 	snprintf(portnum, sizeof(portnum) - 1, "%d", port);
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = addr_family;
-#if defined(WINDOWS) || defined(OPENBSD)
-	/* AI_ADDRCONFIG misbehaves on windows, and does not exist in OpenBSD */
+#if defined(WINDOWS) || defined(HAIKU) || defined(OPENBSD)
+	/* AI_ADDRCONFIG misbehaves on windows/haiku, and does not exist in OpenBSD */
 	hints.ai_flags = flags;
 #else
 	hints.ai_flags = AI_ADDRCONFIG | flags;
@@ -240,7 +171,7 @@ open_dns_opt(struct sockaddr_storage *sockaddr, socklen_t sockaddr_len, int v6on
 	if (bind(fd, (struct sockaddr*) sockaddr, sockaddr_len) < 0)
 		err(1, "bind() to %s", format_addr(sockaddr, sockaddr_len));
 
-	fprintf(stderr, "Opened IPv%d UDP socket\n", sockaddr->ss_family == AF_INET6 ? 6 : 4);
+	ui_log("Opened IPv%d UDP socket\n", sockaddr->ss_family == AF_INET6 ? 6 : 4);
 
 	return fd;
 }
@@ -286,48 +217,6 @@ build_netmask(int netbits, struct in_addr *addr)
 	netmask <<= (32 - netbits);
 	addr->s_addr = htonl(netmask);
 	return 0;
-}
-
-void
-read_password(char *buf, size_t len)
-{
-	char pwd[80] = {0};
-#ifndef WINDOWS
-	struct termios old;
-	struct termios tp;
-
-	tcgetattr(0, &tp);
-	old = tp;
-
-	tp.c_lflag &= (~ECHO);
-	tcsetattr(0, TCSANOW, &tp);
-#else
-	int i;
-#endif
-
-	fprintf(stderr, "Enter tunnel password: ");
-	fflush(stderr);
-#ifndef WINDOWS
-	fscanf(stdin, "%79[^\n]", pwd);
-#else
-	for (i = 0; i < sizeof(pwd); i++) {
-		pwd[i] = getch();
-		if (pwd[i] == '\r' || pwd[i] == '\n') {
-			pwd[i] = 0;
-			break;
-		} else if (pwd[i] == '\b') {
-			i--; 			/* Remove the \b char */
-			if (i >=0) i--; 	/* If not first char, remove one more */
-		}
-	}
-#endif
-	fprintf(stderr, "\n");
-
-#ifndef WINDOWS
-	tcsetattr(0, TCSANOW, &old);
-#endif
-
-	strlcpy(buf, pwd, len);
 }
 
 int

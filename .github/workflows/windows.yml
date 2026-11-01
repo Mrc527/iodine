@@ -15,17 +15,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: x86_64 GCC (UCRT64)
+          - name: build UCRT64
             runner: windows-latest
             msystem: UCRT64
             pkg_prefix: mingw-w64-ucrt-x86_64
 
-          - name: x86_64 Clang (CLANG64)
+          - name: build CLANG64
             runner: windows-latest
             msystem: CLANG64
             pkg_prefix: mingw-w64-clang-x86_64
 
-          - name: ARM64 Clang (CLANGARM64)
+          - name: build CLANGARM64
             runner: windows-11-arm
             msystem: CLANGARM64
             pkg_prefix: mingw-w64-clang-aarch64
@@ -56,3 +56,25 @@ jobs:
     - name: run tests
       working-directory: build
       run: ninja test
+
+  build-android:
+
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: "3.x"
+    - name: install meson
+      shell: pwsh
+      run: |
+        pip install -q meson ninja
+        refreshenv
+    - name: meson setup
+      shell: pwsh
+      run: meson setup build-android --cross-file .github\windows-android-aarch64.ini
+    - name: build
+      shell: pwsh
+      working-directory: build-android
+      run: ninja

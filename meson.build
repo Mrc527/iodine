@@ -19,36 +19,39 @@ cdata.set_quoted('IODINE_VERSION', meson.project_version())
 
 includes = include_directories('src', 'wintun/include')
 target_dir = get_option('sbindir')
+docdir = get_option('docdir')
+if docdir == ''
+        docdir = get_option('datadir') / 'doc' / 'iodine'
+endif
 
 zlib = dependency('zlib')
-commondeps = [zlib]
+commondeps = []
 serverdeps = []
 
-cdata.set10('@0@'.format(host_machine.system().to_upper()), true)
+cdata.set10(host_machine.system().to_upper(), true)
 if host_machine.system() == 'linux'
   add_project_arguments('-D_GNU_SOURCE', language: 'c')
-  selinux = dependency('libselinux', required: false)
+  selinux = dependency('libselinux', required: get_option('selinux'))
   cdata.set10('HAVE_SETCON', selinux.found())
   commondeps += selinux
-  systemd = dependency('libsystemd', required: false)
-  if not systemd.found()
-    systemd = dependency('libsystemd-daemon', required: false)
-  endif
+  systemd = dependency('libsystemd', required: get_option('systemd'))
   cdata.set10('HAVE_SYSTEMD', systemd.found())
   serverdeps += systemd
-  libcapng = dependency('libcap-ng', required: false)
+  libcapng = dependency('libcap-ng', required: get_option('libcapng'))
   cdata.set10('HAVE_LIBCAPNG', libcapng.found())
   commondeps += libcapng
 endif
 if host_machine.system() == 'android'
   cdata.set10('LINUX', true)
 endif
-if host_machine.system() == 'gnu'
-  add_project_arguments('-D_GNU_SOURCE', language: 'c')
-endif
 if host_machine.system() == 'darwin'
   add_project_arguments('-D__APPLE_USE_RFC_3542', language: 'c')
   add_project_arguments('-DBIND_8_COMPAT', language: 'c')
+endif
+if host_machine.system() == 'haiku'
+  commondeps += cc.find_library('network')
+  commondeps += cc.find_library('bsd')
+  add_project_arguments('-D_BSD_SOURCE', language: 'c')
 endif
 if host_machine.system() == 'windows'
   add_project_arguments(
@@ -56,25 +59,23 @@ if host_machine.system() == 'windows'
     '-D_WIN32_WINNT=0x0601',
     language: 'c'
   )
-  commondeps += cc.find_library('ws2_32', required: true)
-  commondeps += cc.find_library('iphlpapi', required: true)
+  commondeps += cc.find_library('ws2_32')
+  commondeps += cc.find_library('iphlpapi')
   target_dir = get_option('bindir')
-  fs.copyfile(
-    'wintun/bin' / host_machine.cpu_family() / 'wintun.dll',
-    install:true,
-    install_dir: target_dir,
-  )
 
-  zdir = zlib.get_variable(pkgconfig: 'exec_prefix', default_value: '')
-  if zdir != ''
-    zlib_dll = zdir / 'bin' / 'zlib1.dll'
-    if fs.exists(zlib_dll)
-      fs.copyfile(
-        zlib_dll,
-        install:true,
-        install_dir: target_dir,
-      )
-    endif
+  zlib_dll = zlib.get_variable(pkgconfig: 'sharedlibdir',
+                               default_value: '') / 'zlib1.dll'
+  if not fs.exists(zlib_dll)
+    zlib_dll = zlib.get_variable(pkgconfig: 'exec_prefix',
+                                 default_value: '') / 'bin' / 'zlib1.dll'
+  endif
+  if fs.exists(zlib_dll)
+    fs.copyfile(
+      zlib_dll,
+      install: true,
+      install_dir: target_dir,
+      install_tag: 'runtime',
+    )
   endif
 endif
 
@@ -89,14 +90,15 @@ optional_functions = [
   'geteuid',
   'getpwnam',
   'getrandom',
-  'inet_aton',
   'setgroups',
   'strlcpy',
   'syslog',
+  'tzset',
   'warnx',
 ]
 foreach func : optional_functions
-  cdata.set10('HAVE_@0@'.format(func).to_upper(), cc.has_function(func))
+  cdata.set10('HAVE_@0@'.format(func).to_upper(),
+    cc.has_function(func, dependencies: commondeps))
 endforeach
 
 cdata.set10('HAVE_FD_CLOEXEC', cc.has_header_symbol('fcntl.h', 'FD_CLOEXEC'))
@@ -110,6 +112,17 @@ cdata.set10('HAVE_PROGNAME', cc.links('''
     return 0;
   }
 '''))
+
+if cc.has_header_symbol('netinet/in.h', 'IP_MTU_DISCOVER')
+  cdata.set('IP_OPT_DONT_FRAG', 'IP_MTU_DISCOVER')
+  cdata.set('DONT_FRAG_VALUE', 'IP_PMTUDISC_DO')
+elif cc.has_header_symbol('netinet/in.h', 'IP_DONTFRAG')
+  cdata.set('IP_OPT_DONT_FRAG', 'IP_DONTFRAG')
+  cdata.set('DONT_FRAG_VALUE', 1)
+elif cc.has_header_symbol('ws2tcpip.h', 'IP_DONTFRAGMENT')
+  cdata.set('IP_OPT_DONT_FRAG', 'IP_DONTFRAGMENT')
+  cdata.set('DONT_FRAG_VALUE', 1)
+endif
 
 # For md5
 cdata.set10('ARCH_IS_BIG_ENDIAN', host_machine.endian() == 'big')
@@ -127,15 +140,24 @@ common_sources = files(
   'src/process.c',
   'src/read.c',
   'src/run_as.c',
+  'src/ui.c',
   'src/util.c',
 )
 
 if host_machine.system() == 'windows'
   common_sources += files('src/tun_windows.c')
+  fs.copyfile(
+    'wintun/bin' / host_machine.cpu_family() / 'wintun.dll',
+    install: true,
+    install_dir: target_dir,
+    install_tag: 'runtime',
+  )
 else
   common_sources += files('src/tun_unix.c')
   cdata.set_quoted('LINUX_TUN_DEV_PATH',
     host_machine.system() == 'android' ? '/dev/tun' : '/dev/net/tun')
+  cdata.set10('TUN_ADD_ROUTE',
+    ['netbsd', 'freebsd', 'openbsd', 'darwin'].contains(host_machine.system()))
 endif
 
 libcommon = static_library(
@@ -148,15 +170,11 @@ libcommon = static_library(
 configure_file(output: 'config.h',
   configuration: cdata)
 
-client = files(
-  'src/client.c',
-  'src/iodine.c',
-)
-
 executable('iodine',
-  sources: client,
+  sources: files('src/client.c', 'src/iodine.c'),
   link_with: libcommon,
   include_directories: includes,
+  dependencies: zlib,
   install: true,
   install_dir: target_dir,
 )
@@ -168,9 +186,9 @@ libserver = static_library(
 )
 
 executable('iodined',
-  sources: files('src/iodined.c'),
+  sources: files('src/iodined.c', 'src/server.c'),
   link_with: [libcommon, libserver],
-  dependencies: serverdeps,
+  dependencies: serverdeps + zlib,
   include_directories: includes,
   install: true,
   install_dir: target_dir,
@@ -189,18 +207,28 @@ if not ['android', 'windows'].contains(host_machine.system())
       configuration: man_conf,
       install: true,
       install_dir: get_option('mandir') / 'man8',
+      install_tag: 'man',
     )
   endforeach
 endif
 
-install_data('README.md', install_dir: get_option('datadir') / 'doc' / 'iodine')
+install_data('README.md',
+  install_dir: docdir,
+  install_tag: 'doc',
+)
+os_readme = 'README-@0@.txt'.format(host_machine.system())
+if fs.exists(os_readme)
+  install_data(os_readme,
+    install_dir: docdir,
+    install_tag: 'doc',
+  )
+endif
 
 libcheck = dependency('check', required: false)
-
 if libcheck.found()
   suites = [
-    'base32', 'base64', 'base64u', 'base128', 'common', 'dns', 'encoding',
-    'fw_query', 'login', 'process', 'read', 'user'
+    'base32', 'base64', 'base64u', 'base128', 'common', 'compat', 'dns',
+    'encoding', 'fw_query', 'login', 'process', 'read', 'ui', 'user'
   ]
 
   # Silence warning from check.h
@@ -209,6 +237,8 @@ if libcheck.found()
   if cc.get_id() == 'clang'
     testargs += '-Wno-gnu-zero-variadic-macro-arguments'
   endif
+  testargs += '-DPROGNAME_SUFFIX=@0@'.format(
+    host_machine.system() == 'windows' ? '".exe"' : '""')
 
   foreach suite : suites
     test(suite, executable(
@@ -219,7 +249,28 @@ if libcheck.found()
       link_with: [libcommon, libserver],
       include_directories: includes,
       dependencies: [libcheck],
+      build_by_default: false,
       c_args: testargs + '-DSUITE_NAME="@0@"'.format(suite),
     ))
   endforeach
+endif
+
+tun_ping = executable('tun_ping',
+  sources: files('tests/tun_ping.c'),
+  build_by_default: false,
+  include_directories: includes,
+  link_with: libcommon,
+)
+
+py3 = import('python').find_installation('python3', required: false)
+if py3.found()
+  run_target('tun_bench',
+    command: [
+      py3,
+      files('tests/tun_bench.py'),
+      tun_ping.full_path(),
+      host_machine.system(),
+    ],
+    depends: tun_ping,
+  )
 endif

@@ -41,7 +41,6 @@ extern const unsigned char raw_header[RAW_HDR_LEN];
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <err.h>
-#include <netinet/in.h>
 #include <arpa/inet.h>
 #endif
 
@@ -55,20 +54,6 @@ extern const unsigned char raw_header[RAW_HDR_LEN];
 #endif
 
 #define QUERY_NAME_SIZE 256
-
-#if defined IP_MTU_DISCOVER
-  /* Linux */
-# define IP_OPT_DONT_FRAG IP_MTU_DISCOVER
-# define DONT_FRAG_VALUE IP_PMTUDISC_DO
-#elif defined IP_DONTFRAG
-  /* FreeBSD */
-# define IP_OPT_DONT_FRAG IP_DONTFRAG
-# define DONT_FRAG_VALUE 1
-#elif defined IP_DONTFRAGMENT
-  /* Winsock2 */
-# define IP_OPT_DONT_FRAG IP_DONTFRAGMENT
-# define DONT_FRAG_VALUE 1
-#endif
 
 #define T_PRIVATE 65399
 /* Undefined RR type; "private use" range, see
@@ -106,17 +91,16 @@ enum connection {
 	CONN_MAX
 };
 
-void check_privileges(char *username, int port);
+char *format_inaddr(struct in_addr *addr);
 char *format_addr(struct sockaddr_storage *sockaddr, socklen_t sockaddr_len);
-int get_addr(char *host, int port, int addr_family, int flags, struct sockaddr_storage *out, socklen_t *outlen);
+int get_addr(char *host, int port, int addr_family, int flags,
+             struct sockaddr_storage *out, socklen_t *outlen);
 int open_dns(struct sockaddr_storage *, socklen_t);
 int open_dns_opt(struct sockaddr_storage *sockaddr, socklen_t sockaddr_len, int v6only);
 int open_dns_from_host(char *host, int port, int addr_family, int flags);
 void close_dns(int);
 
 int build_netmask(int netbits, struct in_addr *addr);
-
-void read_password(char*, size_t);
 
 int check_topdomain(char *, int, char **);
 

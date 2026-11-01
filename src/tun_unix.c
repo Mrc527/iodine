@@ -32,6 +32,7 @@
 
 #include "config.h"
 #include "compat.h"
+#include "ui.h"
 
 #ifdef DARWIN
 #include <ctype.h>
@@ -43,11 +44,15 @@
 #include <netinet/ip.h>
 #endif
 
-#ifndef LINUX
+#if TUN_ADD_ROUTE
 #include <sys/sockio.h>
 #include <net/route.h>
 #include <net/if_dl.h>
 #include <netinet/in_var.h>
+#endif
+
+#ifdef HAIKU
+#include <sys/sockio.h>
 #endif
 
 #define TUN_MAX_TRY 50
@@ -68,7 +73,7 @@ open_tun(const char *tun_device)
 	int tun_fd;
 	struct ifreq ifreq;
 
-	if ((tun_fd = open(LINUX_TUN_DEV_PATH, O_RDWR)) < 0) {
+	if ((tun_fd = open(LINUX_TUN_DEV_PATH, O_RDWR | O_NONBLOCK)) < 0) {
 		warn("open_tun: open(%s)", LINUX_TUN_DEV_PATH);
 		return -1;
 	}
@@ -82,7 +87,7 @@ open_tun(const char *tun_device)
 		strlcpy(if_name, tun_device, sizeof(if_name));
 
 		if (ioctl(tun_fd, TUNSETIFF, (void *) &ifreq) != -1) {
-			fprintf(stderr, "Opened %s\n", ifreq.ifr_name);
+			ui_log("Opened %s\n", ifreq.ifr_name);
 			fd_set_close_on_exec(tun_fd);
 			return tun_fd;
 		}
@@ -96,7 +101,7 @@ open_tun(const char *tun_device)
 			snprintf(ifreq.ifr_name, IFNAMSIZ, "dns%d", i);
 
 			if (ioctl(tun_fd, TUNSETIFF, (void *) &ifreq) != -1) {
-				fprintf(stderr, "Opened %s\n", ifreq.ifr_name);
+				ui_log("Opened %s\n", ifreq.ifr_name);
 				snprintf(if_name, sizeof(if_name), "dns%d", i);
 				fd_set_close_on_exec(tun_fd);
 				return tun_fd;
@@ -148,12 +153,24 @@ open_utun(const char *dev)
 	char ifname[10];
 	socklen_t ifname_len = sizeof(ifname);
 	int unit;
+	int flags;
 	int fd = -1;
 	int err = 0;
 
 	fd = socket(PF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL);
 	if (fd < 0) {
 		warn("open_utun: socket(PF_SYSTEM)");
+		return -1;
+	}
+
+	/* Set socket in non-blocking mode */
+	flags = fcntl(fd, F_GETFL, 0);
+	if (flags < 0) {
+		close(fd);
+		return -1;
+	}
+	if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+		close(fd);
 		return -1;
 	}
 
@@ -197,7 +214,7 @@ open_utun(const char *dev)
 
 	strlcpy(if_name, ifname, sizeof(if_name));
 
-	fprintf(stderr, "Opened %s\n", ifname);
+	ui_log("Opened %s\n", ifname);
 	fd_set_close_on_exec(fd);
 
 	return fd;
@@ -226,20 +243,20 @@ open_tun(const char *tun_device)
 		strlcpy(if_name, tun_device, sizeof(if_name));
 		if_name[sizeof(if_name)-1] = '\0';
 
-		if ((tun_fd = open(tun_name, O_RDWR)) < 0) {
+		if ((tun_fd = open(tun_name, O_RDWR | O_NONBLOCK)) < 0) {
 			warn("open_tun: %s", tun_name);
 			return -1;
 		}
 
-		fprintf(stderr, "Opened %s\n", tun_name);
+		ui_log("Opened %s\n", tun_name);
 		fd_set_close_on_exec(tun_fd);
 		return tun_fd;
 	} else {
 		for (i = 0; i < TUN_MAX_TRY; i++) {
 			snprintf(tun_name, sizeof(tun_name), "/dev/tun%d", i);
 
-			if ((tun_fd = open(tun_name, O_RDWR)) >= 0) {
-				fprintf(stderr, "Opened %s\n", tun_name);
+			if ((tun_fd = open(tun_name, O_RDWR | O_NONBLOCK)) >= 0) {
+				ui_log("Opened %s\n", tun_name);
 				snprintf(if_name, sizeof(if_name), "tun%d", i);
 				fd_set_close_on_exec(tun_fd);
 				return tun_fd;
@@ -250,7 +267,7 @@ open_tun(const char *tun_device)
 		}
 
 #ifdef DARWIN
-		fprintf(stderr, "No tun devices found, trying utun\n");
+		ui_log("No tun devices found, trying utun\n");
 		for (i = 0; i < TUN_MAX_TRY; i++) {
 			snprintf(tun_name, sizeof(tun_name), "utun%d", i);
 			tun_fd = open_utun(tun_name);
@@ -278,8 +295,8 @@ close_tun(int tun_fd)
 static int
 tun_uses_header(void)
 {
-#if defined (FREEBSD) || defined (NETBSD)
-	/* FreeBSD/NetBSD has no header */
+#if defined (FREEBSD) || defined (NETBSD) || HAIKU
+	/* FreeBSD/NetBSD/Haiku has no header */
 	return 0;
 #elif defined (DARWIN)
 	/* Darwin tun has no header, Darwin utun does */
@@ -338,7 +355,7 @@ read_tun(int tun_fd, char *buf, size_t len)
 	}
 }
 
-#ifndef LINUX
+#if TUN_ADD_ROUTE
 static int
 tun_add_route(struct sockaddr_in *localaddr, struct sockaddr_in *maskaddr)
 {
@@ -397,46 +414,63 @@ tun_add_route(struct sockaddr_in *localaddr, struct sockaddr_in *maskaddr)
 #endif
 
 int
-tun_setip(const char *ip, const char *other_ip, int netbits)
+tun_setip(const in_addr_t *ip, const in_addr_t *peer_ip, int netbits)
 {
 	int sock;
 	struct sockaddr_in localaddr, peeraddr, maskaddr;
-#ifdef LINUX
+#if LINUX
 	struct ifreq ifr;
+#elif HAIKU
+	char cmd[512];
+	char local_str[INET_ADDRSTRLEN];
+	char peer_str[INET_ADDRSTRLEN];
+	char mask_str[INET_ADDRSTRLEN];
 #else
 	struct in_aliasreq ifra;
 #endif
 
 	memset(&localaddr, 0, sizeof(localaddr));
-	memset(&peeraddr, 0, sizeof(peeraddr));
-	memset(&maskaddr, 0, sizeof(maskaddr));
+	localaddr.sin_family = AF_INET;
+	localaddr.sin_addr.s_addr = *ip;
 
+	memset(&peeraddr, 0, sizeof(peeraddr));
+	peeraddr.sin_family = AF_INET;
+	peeraddr.sin_addr.s_addr = *peer_ip;
+
+	memset(&maskaddr, 0, sizeof(maskaddr));
 	maskaddr.sin_family = AF_INET;
 	if (build_netmask(netbits, &maskaddr.sin_addr)) {
-		fprintf(stderr, "Invalid netmask: %d!\n", netbits);
+		ui_log("Invalid netmask: %d!\n", netbits);
 		return 1;
 	}
 
-	localaddr.sin_family = AF_INET;
-	if (inet_pton(AF_INET, ip, &localaddr.sin_addr) <= 0) {
-		fprintf(stderr, "Invalid IP: %s!\n", ip);
+#if HAIKU
+	(void)sock;
+	inet_ntop(AF_INET, &localaddr.sin_addr, local_str, sizeof(local_str));
+	inet_ntop(AF_INET, &peeraddr.sin_addr, peer_str, sizeof(peer_str));
+	inet_ntop(AF_INET, &maskaddr.sin_addr, mask_str, sizeof(mask_str));
+
+	ui_log("Setting IP of %s to %s\n", if_name, local_str);
+
+	snprintf(cmd, sizeof(cmd),
+		 "ifconfig %s %s peer %s netmask %s up",
+		 if_name, local_str, peer_str, mask_str);
+	if (system(cmd) != 0) {
+		ui_log("tun_setip: ifconfig failed\n");
 		return 1;
 	}
+	return 0;
+#else
 
-	peeraddr.sin_family = AF_INET;
-	if (inet_pton(AF_INET, other_ip, &peeraddr.sin_addr) <= 0) {
-		fprintf(stderr, "Invalid peer IP: %s!\n", other_ip);
-		return 1;
-	}
-
-	fprintf(stderr, "Setting IP of %s to %s\n", if_name, ip);
+	ui_log("Setting IP of %s to %s\n",
+		if_name, format_inaddr(&localaddr.sin_addr));
 	sock = socket(AF_INET, SOCK_DGRAM, 0);
 	if (sock < 0) {
 		perror("tun_setip: socket creation failed");
 		return 1;
 	}
 
-#ifdef LINUX
+#if LINUX
 	memset(&ifr, 0, sizeof(ifr));
 	strlcpy(ifr.ifr_name, if_name, IFNAMSIZ);
 
@@ -495,6 +529,7 @@ tun_setip(const char *ip, const char *other_ip, int netbits)
 	close(sock);
 	return tun_add_route(&localaddr, &maskaddr);
 #endif
+#endif
 }
 
 int
@@ -504,7 +539,7 @@ tun_setmtu(const unsigned mtu)
 	struct ifreq ifr;
 
 	if (mtu <= 200 || mtu > 1500) {
-		warn("MTU out of range: %u\n", mtu);
+		warnx("tun_setmtu: MTU out of range: %u\n", mtu);
 		return 1;
 	}
 
@@ -518,7 +553,7 @@ tun_setmtu(const unsigned mtu)
 	strlcpy(ifr.ifr_name, if_name, IFNAMSIZ);
 	ifr.ifr_mtu = mtu;
 
-	fprintf(stderr, "Setting MTU of %s to %u\n", if_name, mtu);
+	ui_log("Setting MTU of %s to %u\n", if_name, mtu);
 	if (ioctl(sock, SIOCSIFMTU, &ifr) < 0) {
 		perror("tun_setmtu: ioctl SIOCSIFMTU failed");
 		close(sock);
@@ -529,3 +564,16 @@ tun_setmtu(const unsigned mtu)
 	return 0;
 }
 
+void
+tun_flush_rx(int tun_fd)
+{
+	(void)tun_fd;
+#ifndef HAIKU
+	ssize_t len;
+	char buffer[4096];
+
+	do {
+		len = read(tun_fd, buffer, sizeof(buffer));
+	} while (len > 0);
+#endif
+}

@@ -55,7 +55,7 @@ jobs:
     - name: apt update
       run: sudo apt update
     - name: install deps
-      run: sudo apt install meson ninja-build check
+      run: sudo apt install meson ninja-build
     - name: meson setup
       run: meson setup build-android --cross-file .github/ubuntu-android-aarch64.ini
     - name: build
@@ -73,7 +73,29 @@ jobs:
     - name: install deps
       run: sudo apt install meson ninja-build mingw-w64 mingw-w64-tools libz-mingw-w64-dev
     - name: meson setup
-      run: meson setup build-windows --cross-file .github/ubuntu-windows-x86_64.ini
+      run: meson setup build-windows --cross-file .github/mingw-windows-x86_64.ini
     - name: build
       working-directory: build-windows
       run: ninja
+
+  tunnel_bench:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+    - name: apt update
+      run: sudo apt update
+    - name: install deps
+      run: >-
+        sudo apt install -y
+        meson ninja-build
+    - name: install ping3
+      run: pip install ping3
+    - name: meson setup
+      run: meson setup build
+    - name: build tun_ping
+      working-directory: build
+      run: ninja tun_ping
+    - name: run bench
+      working-directory: build
+      run: sudo -E ninja tun_bench

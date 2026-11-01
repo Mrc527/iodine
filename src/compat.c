@@ -16,9 +16,16 @@
  */
 
 #include "config.h"
+
+#if !HAVE_PROGNAME
+char *__progname = "?";
+#endif
 #include "compat.h"
 
+#include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #ifdef WINDOWS
 #include "windows_dns.h"
@@ -29,6 +36,25 @@ WSADATA wsa_data;
 #endif
 
 void
+progname_init(char *arg)
+{
+	(void)arg;
+#if !HAVE_PROGNAME
+	__progname = strrchr(arg, '/');
+	if (__progname) {
+		__progname++;
+		return;
+	}
+	__progname = strrchr(arg, '\\');
+	if (__progname) {
+		__progname++;
+		return;
+	}
+	__progname = arg;
+#endif
+}
+
+void
 network_init(void)
 {
 #ifdef WINDOWS
@@ -36,27 +62,20 @@ network_init(void)
 #endif
 }
 
-#if !HAVE_INET_ATON
-int
-inet_aton(const char *cp, struct in_addr *inp)
-{
- inp->s_addr = inet_addr(cp);
- return inp->s_addr != INADDR_ANY;
-}
-#endif
-
 #if !HAVE_WARNX
 void
 vwarn(const char *fmt, va_list list)
 {
+	fprintf(stderr, "%s: ", __progname);
 	if (fmt) vfprintf(stderr, fmt, list);
-#ifndef ANDROID
+#ifdef WINDOWS
 	if (errno == 0) {
 		fprintf(stderr, ": WSA error %d\n", WSAGetLastError());
-	} else {
+	} else
+#endif
+	{
 		fprintf(stderr, ": %s\n", strerror(errno));
 	}
-#endif
 }
 
 void
@@ -83,6 +102,7 @@ err(int eval, const char *fmt, ...)
 void
 vwarnx(const char *fmt, va_list list)
 {
+	fprintf(stderr, "%s: ", __progname);
 	if (fmt) vfprintf(stderr, fmt, list);
 	fprintf(stderr, "\n");
 }

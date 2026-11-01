@@ -26,6 +26,14 @@ jobs:
     - name: run tests
       working-directory: build
       run: ninja test
+    - name: install ping3
+      run: sudo python -m pip install ping3
+    - name: build tun_ping
+      working-directory: build
+      run: ninja tun_ping
+    - name: run bench
+      working-directory: build
+      run: sudo ninja tun_bench
 
   build-android:
 
@@ -34,9 +42,23 @@ jobs:
     steps:
     - uses: actions/checkout@v7
     - name: install deps
-      run: brew install check meson
+      run: brew install meson
     - name: meson setup
       run: meson setup build-android --cross-file .github/macos-android-aarch64.ini
     - name: build
       working-directory: build-android
+      run: ninja
+
+  build-windows:
+
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v7
+    - name: install deps
+      run: brew install check meson mingw-w64
+    - name: meson setup
+      run: meson setup build-windows --cross-file .github/mingw-windows-x86_64.ini
+    - name: build
+      working-directory: build-windows
       run: ninja

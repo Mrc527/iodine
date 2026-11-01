@@ -19,17 +19,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <string.h>
-#include <errno.h>
 #include <stdint.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
 
 #include "config.h"
 #include "common.h"
 #include "compat.h"
 #include "tun.h"
+#include "ui.h"
 #include "wintun.h"
 
 #include <winsock2.h>
@@ -127,6 +123,7 @@ open_tun(const char *tun_device)
 	int tunfd;
 	struct sockaddr_storage localsock;
 	socklen_t localsock_len;
+	u_long mode;
 
 	if(wintun_init()) {
 		warnx("Could not load wintun.dll");
@@ -140,7 +137,7 @@ open_tun(const char *tun_device)
 		wcscpy_s(wname, ARRAYSIZE(wname), L"DNS Tunnel");
 		snprintf(if_name, sizeof(if_name), "DNS Tunnel");
 	}
-	fprintf(stderr, "Opening Wintun interface '%s'...\n", if_name);
+	ui_log("Opening Wintun interface '%s'...\n", if_name);
 
 	adapter_handle = WintunOpenAdapter(wname);
 	if (!adapter_handle) {
@@ -164,8 +161,14 @@ open_tun(const char *tun_device)
 	 * A thread does blocking reads on the tun device and
 	 * sends data as udp to this socket */
 	if (get_addr("127.0.0.1", 55353, AF_INET, 0, &localsock, &localsock_len))
-        return -1;
+		return -1;
 	tunfd = open_dns(&localsock, localsock_len);
+
+	/* Enable non-blocking mode for socket */
+	mode = 1;
+	if (ioctlsocket(tunfd, FIONBIO, &mode)) {
+		return -1;
+	}
 
 	data.session = session_handle;
 	memcpy(&(data.addr), &localsock, localsock_len);
@@ -217,25 +220,21 @@ read_tun(int tun_fd, char *buf, size_t len)
 }
 
 int
-tun_setip(const char *ip, const char *other_ip, int netbits)
+tun_setip(const in_addr_t *ip, const in_addr_t *peer_ip, int netbits)
 {
 	struct in_addr netmask;
-	in_addr_t localaddr;
+	struct in_addr localaddr;
 	DWORD status;
 	MIB_UNICASTIPADDRESS_ROW ip_row;
 	PMIB_UNICASTIPADDRESS_TABLE table = NULL;
-	(void)other_ip;
+	(void)peer_ip;
 
 	if (build_netmask(netbits, &netmask)) {
-		fprintf(stderr, "Invalid netmask: %d!\n", netbits);
+		ui_log("Invalid netmask: %d!\n", netbits);
 		return 1;
 	}
 
-	localaddr = inet_addr(ip);
-	if (localaddr == INADDR_NONE) {
-		fprintf(stderr, "Invalid IP: %s!\n", ip);
-		return 1;
-	}
+	localaddr.s_addr = *ip;
 
 	/* Remove earlier IP addresses on interface */
 	if (GetUnicastIpAddressTable(AF_INET, &table) == NO_ERROR) {
@@ -247,15 +246,16 @@ tun_setip(const char *ip, const char *other_ip, int netbits)
 		FreeMibTable(table);
 	}
 
-	fprintf(stderr, "Setting IP of interface '%s' to %s\n", if_name, ip);
+	ui_log("Setting IP of interface '%s' to %s\n",
+		if_name, format_inaddr(&localaddr));
 	InitializeUnicastIpAddressEntry(&ip_row);
 	ip_row.InterfaceLuid = luid;
 	ip_row.OnLinkPrefixLength = netbits;
 	ip_row.Address.Ipv4.sin_family = AF_INET;
-	ip_row.Address.Ipv4.sin_addr.s_addr = localaddr;
+	ip_row.Address.Ipv4.sin_addr = localaddr;
 	status = CreateUnicastIpAddressEntry(&ip_row);
 	if (status != NO_ERROR) {
-		warnx("tun_setmtu: CreateUnicastIpAddressEntry failed: status %lu", status);
+		warnx("tun_setip: CreateUnicastIpAddressEntry failed: status %lu", status);
 		return 1;
 	}
 	return 0;
@@ -268,7 +268,7 @@ tun_setmtu(const unsigned mtu)
 	NETIO_STATUS res;
 
 	if (mtu <= 200 || mtu > 1500) {
-		warn("MTU out of range: %u\n", mtu);
+		warnx("tun_setmtu: MTU out of range: %u\n", mtu);
 		return 1;
 	}
 
@@ -276,7 +276,7 @@ tun_setmtu(const unsigned mtu)
 	row.Family = AF_INET;
 	row.InterfaceLuid = luid;
 	row.NlMtu = mtu;
-	fprintf(stderr, "Setting MTU of '%s' to %u\n", if_name, mtu);
+	ui_log("Setting MTU of '%s' to %u\n", if_name, mtu);
 	res = SetIpInterfaceEntry(&row);
 	if (res != NO_ERROR) {
 		warnx("tun_setmtu: SetIpInterfaceEntry failed: status %d", res);
@@ -285,3 +285,13 @@ tun_setmtu(const unsigned mtu)
 	return 0;
 }
 
+void
+tun_flush_rx(int tun_fd)
+{
+	ssize_t len;
+	char buffer[4096];
+
+	do {
+		len = read(tun_fd, buffer, sizeof(buffer));
+	} while (len > 0);
+}

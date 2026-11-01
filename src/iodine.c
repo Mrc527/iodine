@@ -43,13 +43,8 @@
 #include "process.h"
 #include "run_as.h"
 #include "tun.h"
+#include "ui.h"
 #include "util.h"
-
-#if HAVE_PROGNAME
-extern char *__progname;
-#else
-static char *__progname;
-#endif
 
 #define PASSWORD_ENV_VAR "IODINE_PASS"
 
@@ -114,8 +109,8 @@ static inline void usage(void)
 
 static void version(void)
 {
-	fprintf(stderr, "iodine IP over DNS tunneling client\n"
-			"Version: %s\n", IODINE_VERSION);
+	ui_log("iodine IP over DNS tunneling client\n"
+	       "Version: %s\n", IODINE_VERSION);
 
 	exit(0);
 }
@@ -169,18 +164,11 @@ int main(int argc, char **argv)
 	hostname_maxlen = 0xFF;
 	nameserv_family = AF_UNSPEC;
 
+	progname_init(argv[0]);
 	network_init();
 	client_init();
 
-#if !HAVE_PROGNAME
-	__progname = strrchr(argv[0], '/');
-	if (__progname == NULL)
-		__progname = argv[0];
-	else
-		__progname++;
-#endif
-
-	while ((choice = getopt(argc, argv, "46vfhru:t:d:R:P:m:M:F:T:O:L:I:")) != -1) {
+	while ((choice = getopt(argc, argv, "46vfhru:t:d:R:P:m:M:F:T:O:L:I:z:")) != -1) {
 		switch(choice) {
 		case '4':
 			nameserv_family = AF_INET;
@@ -337,7 +325,7 @@ int main(int argc, char **argv)
 		if (NULL != getenv(PASSWORD_ENV_VAR))
 			snprintf(password, sizeof(password), "%s", getenv(PASSWORD_ENV_VAR));
 		else
-			read_password(password, sizeof(password));
+			ui_read_password(password, sizeof(password));
 	}
 
 	client_set_password(password);
@@ -356,7 +344,7 @@ int main(int argc, char **argv)
 	signal(SIGINT, sighandler);
 	signal(SIGTERM, sighandler);
 
-	fprintf(stderr, "Sending DNS queries for %s to %s\n",
+	ui_log("Sending DNS queries for %s to %s\n",
 		topdomain, format_addr(&nameservaddr, nameservaddr_len));
 
 	if (client_handshake(dns_fd, raw_mode, autodetect_frag_size, max_downstream_frag_size)) {
@@ -365,10 +353,13 @@ int main(int argc, char **argv)
 	}
 
 	if (client_get_conn() == CONN_RAW_UDP) {
-		fprintf(stderr, "Sending raw traffic directly to %s\n", client_get_raw_addr());
+		ui_log("Sending raw traffic directly to %s\n", client_get_raw_addr());
 	}
 
-	fprintf(stderr, "Connection setup complete, transmitting data.\n");
+	/* Drop any tun packets received so far (MDNS etc) during possibly slow handshake. */
+	tun_flush_rx(tun_fd);
+
+	ui_log("Connection setup complete, transmitting data.\n");
 
 	if (pidfile != NULL)
 		do_pidfile(pidfile);
